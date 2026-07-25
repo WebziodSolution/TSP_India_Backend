@@ -25,13 +25,27 @@ public interface UserInOutRepository extends JpaRepository<UserInOut, Long>, Jpa
     long countCheckedOutUsers(@Param("id") int id, @Param("startOfDay") Date startOfDay,
             @Param("endOfDay") Date endOfDay);
 
-    @Query("SELECT u FROM UserInOut u WHERE u.timeOut IS NULL AND u.user.id=:userId")
+    @Query(value = """
+    SELECT *
+    FROM user_inout
+    WHERE user_id = :userId
+      AND time_out IS NULL
+    ORDER BY id DESC
+    LIMIT 1
+    """, nativeQuery = true)
     UserInOut getLastRecord(@Param("userId") int userId);
 
     @Query("SELECT u FROM UserInOut u WHERE u.timeOut IS NOT NULL AND u.user.id=:userId")
     List<UserInOut> getAllRecordsByUsers(@Param("userId") int userId);
 
-    @Query("SELECT u FROM UserInOut u WHERE u.timeOut IS NULL AND u.user.id=:userId")
+    @Query(value = """
+SELECT *
+FROM user_inout
+WHERE user_id = :userId
+  AND time_out IS NULL
+ORDER BY time_in DESC
+LIMIT 1
+""", nativeQuery = true)
     UserInOut getCurrentUserRecord(@Param("userId") int userId);
 
     @Query("SELECT u FROM UserInOut u WHERE (:userId IS NULL OR u.user.id = :userId) AND u.createdOn BETWEEN :startDate AND :endDate")

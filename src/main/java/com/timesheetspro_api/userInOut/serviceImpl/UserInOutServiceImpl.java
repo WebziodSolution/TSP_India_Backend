@@ -123,7 +123,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Override
     public Map<String, Object> getAllEntriesGroupByUser(List<Integer> userIds, String startDate, String endDate,
-            String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
+                                                        String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
         try {
             ZoneId zone = ZoneId.of(timeZone);
             Instant startInstant, endInstant;
@@ -375,7 +375,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Override
     public List<UserInOutDto> getAllEntriesByUserId(List<Integer> userIds, String startDate, String endDate,
-            String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
+                                                    String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
         try {
             // // --- Date handling using java.time ---
             ZoneId zone = ZoneId.of(timeZone);
@@ -568,13 +568,16 @@ public class UserInOutServiceImpl implements UserInOutService {
             UserInOut userInOut = this.userInOutRepository.getLastRecord(id);
             UserInOutDto userInOutDto = new UserInOutDto();
             if (userInOut != null) {
+                userInOutDto.setId(userInOut.getId());
                 userInOutDto.setUserId(userInOut.getUser().getEmployeeId());
 
                 userInOutDto.setTimeIn(this.commonService.convertDateToString(userInOut.getTimeIn(), "Asia/Calcutta"));
                 if (userInOut.getLocations() != null) {
                     userInOutDto.setLocationId(userInOut.getLocations().getId());
                 }
-                BeanUtils.copyProperties(userInOut, userInOutDto);
+                userInOutDto
+                        .setTimeOut(this.commonService.convertDateToString(userInOut.getTimeOut(), "Asia/Calcutta"));
+
                 return userInOutDto;
             } else {
                 return null;
@@ -592,11 +595,11 @@ public class UserInOutServiceImpl implements UserInOutService {
             userInOutDto.setId(userInOut.getId());
             userInOutDto.setUserId(userInOut.getUser().getEmployeeId());
             userInOutDto.setTimeIn(this.commonService.convertDateToString(userInOut.getTimeIn(), "Asia/Calcutta")); // Defaulting
-                                                                                                                    // to
-                                                                                                                    // IST
-                                                                                                                    // or
-                                                                                                                    // pass
-                                                                                                                    // TZ?
+            // to
+            // IST
+            // or
+            // pass
+            // TZ?
             if (userInOut.getTimeOut() != null) {
                 userInOutDto
                         .setTimeOut(this.commonService.convertDateToString(userInOut.getTimeOut(), "Asia/Calcutta"));
@@ -643,7 +646,7 @@ public class UserInOutServiceImpl implements UserInOutService {
         return createUserInOut(userId, locationId, companyId, new Date());
     }
 
-    public void updateUserInOut(Long id, int userId) {
+    public boolean updateUserInOut(Long id, int userId) {
         try {
             UserInOut userInOut = this.userInOutRepository.findById(id)
                     .orElseThrow(() -> new RuntimeException("UserInOut record not found"));
@@ -658,10 +661,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                     userInOut.getLocations() != null ? userInOut.getLocations().getId() : null,
                     employee.getCompanyDetails().getId());
 
-            if (!updated) {
-                // New record created, nothing else to do
-                return;
-            }
+            return updated;
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException(e.getMessage());
@@ -713,8 +713,12 @@ public class UserInOutServiceImpl implements UserInOutService {
 
             if (existing != null) {
                 // There is an open record → attempt to clock out
-                updateUserInOut(existing.getId(), userId);
-                return "updated:" + employee.getUsername();
+                boolean updated = updateUserInOut(existing.getId(), userId);
+                if (updated) {
+                    return "updated:" + employee.getUsername();
+                } else {
+                    return "created:" + employee.getUsername();
+                }
             } else {
                 // No open record → clock in (create new with current time)
                 createUserInOut(userId, locationId, companyId, new Date());
@@ -836,7 +840,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> getTimeInOutReport(List<Integer> userIds, String startDate, String endDate,
-            String timeZone, Integer companyId) {
+                                                  String timeZone, Integer companyId) {
         try {
             SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
             dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -902,7 +906,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                                             "timeOut",
                                             record.getTimeOut() != null
                                                     ? this.commonService.convertDateToString(record.getTimeOut(),
-                                                            timeZone)
+                                                    timeZone)
                                                     : "")));
 
                     monthlyRecords.computeIfAbsent(month, m -> new ArrayList<>()).add(dayRecord);
@@ -923,7 +927,7 @@ public class UserInOutServiceImpl implements UserInOutService {
     }
 
     public Workbook generateExcelReport(Map<String, Object> data, String startDateStr, String endDateStr,
-            String timeZone) {
+                                        String timeZone) {
         try {
             Workbook workbook = new XSSFWorkbook();
             SimpleDateFormat jsonDateFormat = new SimpleDateFormat("MM/dd/yyyy, hh:mm:ss a");
@@ -1216,12 +1220,12 @@ public class UserInOutServiceImpl implements UserInOutService {
         Cell cell = newRow.createCell(0);
         cell.setCellValue(userName);
         cell.setCellStyle(createCellStyle(sheet.getWorkbook(), true, true, true, true, 11)); // Bold, no borders, no
-                                                                                             // centered, size 11
+        // centered, size 11
         return lastRow + 1;
     }
 
     private CellStyle createCellStyle(Workbook workbook, boolean isBold, boolean hasBorders, boolean isCentered,
-            boolean isVerticallyCentered, int fontSize) {
+                                      boolean isVerticallyCentered, int fontSize) {
         CellStyle style = workbook.createCellStyle();
         Font font = workbook.createFont();
 
@@ -1297,7 +1301,7 @@ public class UserInOutServiceImpl implements UserInOutService {
     }
 
     private boolean handleTimeOutUpdate(CompanyEmployee employee, UserInOut existingRecord,
-            Date timeOut, Integer locationId, Integer companyId) {
+                                        Date timeOut, Integer locationId, Integer companyId) {
 
         String autoTimeInAfter = employee.getCompanyDetails().getAutoTimeInAfterHours();
 
@@ -1333,11 +1337,11 @@ public class UserInOutServiceImpl implements UserInOutService {
         // 5️⃣ Check if session duration exceeds the limit
         if (!sessionDuration.isNegative() && sessionDuration.compareTo(allowedLimit) > 0) {
             // Gap exceeded → create new record for next day (timeOut + 24 hours)
-            Instant nextDayInstant = timeOut.toInstant().plus(Duration.ofDays(1));
-            Date nextDayTimeIn = Date.from(nextDayInstant);
-
+//            Instant nextDayInstant = timeOut.toInstant().plus(Duration.ofDays(1));
+//            Date nextDayTimeIn = Date.from(nextDayInstant);
+            Date nextDayTimeIn = Date.from(timeOut.toInstant());
             createUserInOut(employee.getEmployeeId(), locationId, companyId, nextDayTimeIn);
-            return true;
+            return false;
         } else {
             // Within limit → update existing record
             existingRecord.setTimeOut(timeOut);

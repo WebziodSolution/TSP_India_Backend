@@ -23,7 +23,7 @@ public interface UserInOutService {
 
     UserInOutDto createUserInOut(int userId, Integer locationId, Integer parsedCompanyId);
 
-    void updateUserInOut(Long id, int userId);
+    boolean updateUserInOut(Long id, int userId);
 
     UserInOutDto updateUserInOut(UserInOutDto dto);
 
