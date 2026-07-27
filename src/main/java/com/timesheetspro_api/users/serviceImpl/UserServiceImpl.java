@@ -401,7 +401,7 @@ public class UserServiceImpl implements UserService {
                             BeanUtils.copyProperties(companyEmployee, companyEmployeeDto);
 
                             Map<String, Object> userMap = new HashMap<>();
-                            userMap.put("userId", companyEmployee.getEmployeeId());
+                            userMap.put("userId", companyEmployee.getEmployeeId()); 
                             userMap.put("userName", companyEmployee.getUsername());
                             userMap.put("roleId", companyEmployee.getRoles().getRoleId());
                             userMap.put("roleName", companyEmployee.getRoles().getRoleId());

@@ -36,6 +36,8 @@ import org.springframework.stereotype.Service;
 import java.sql.Date;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service(value = "EmployeeSalaryStatementService")
 public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStatementService {
@@ -145,7 +147,14 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
         EmployeeSalaryStatementDto dto = new EmployeeSalaryStatementDto();
         dto.setEmployeeId(companyEmployee.getEmployeeId());
         dto.setCompanyId(companyEmployee.getCompanyDetails().getId());
-        dto.setEmployeeName(companyEmployee.getFirstName() + " " + companyEmployee.getLastName());
+        String userName = Stream.of(
+                        companyEmployee.getFirstName(),
+                        companyEmployee.getMiddleName(),
+                        companyEmployee.getLastName())
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.joining(" "));
+        dto.setEmployeeName(userName);
 
         if (companyEmployee.getBasicSalary() != null)
             dto.setBasicSalary(companyEmployee.getBasicSalary());

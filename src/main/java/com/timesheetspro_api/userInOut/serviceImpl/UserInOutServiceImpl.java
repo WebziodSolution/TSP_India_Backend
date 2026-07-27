@@ -43,6 +43,7 @@ import org.apache.poi.ss.util.CellRangeAddress;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 @Service("userInOutService")
 public class UserInOutServiceImpl implements UserInOutService {
@@ -339,17 +340,29 @@ public class UserInOutServiceImpl implements UserInOutService {
                             absentCount++; // Count only normal day absence
                         }
                     }
-
+                    String userName = Stream.of(
+                                    user.getFirstName(),
+                                    user.getMiddleName(),
+                                    user.getLastName())
+                            .filter(Objects::nonNull)
+                            .filter(s -> !s.isBlank())
+                            .collect(Collectors.joining(" "));
                     dataItem.put("status", status);
-                    dataItem.put("userName", user.getFirstName() + " " + user.getLastName());
+                    dataItem.put("userName", userName);
                     dataItem.put("rowId", rowIndex++);
                     dataList.add(dataItem);
                 }
-
+                String userName = Stream.of(
+                                user.getFirstName(),
+                                user.getMiddleName(),
+                                user.getLastName())
+                        .filter(Objects::nonNull)
+                        .filter(s -> !s.isBlank())
+                        .collect(Collectors.joining(" "));
                 // --- Build user group object with totals and new counters ---
                 Map<String, Object> userGroup = new HashMap<>();
                 userGroup.put("id", user.getEmployeeId());
-                userGroup.put("username", user.getFirstName() + " " + user.getLastName());
+                userGroup.put("username", userName);
                 // Add the new counters right after username
                 userGroup.put("presentCount", presentCount); // P
                 userGroup.put("absentCount", absentCount); // A
@@ -476,7 +489,14 @@ public class UserInOutServiceImpl implements UserInOutService {
                     .map(userInOut -> {
                         UserInOutDto dto = new UserInOutDto();
                         dto.setId(userInOut.getId());
-                        dto.setUserName(userInOut.getUser().getFirstName() + " " + userInOut.getUser().getLastName());
+                        String userName = Stream.of(
+                                        userInOut.getUser().getFirstName(),
+                                        userInOut.getUser().getMiddleName(),
+                                        userInOut.getUser().getLastName())
+                                .filter(Objects::nonNull)
+                                .filter(s -> !s.isBlank())
+                                .collect(Collectors.joining(" "));
+                        dto.setUserName(userName);
                         dto.setHourlyRate(userInOut.getUser().getHourlyRate());
                         dto.setFirstName(userInOut.getUser().getFirstName());
                         dto.setLastName(userInOut.getUser().getLastName());
@@ -865,10 +885,15 @@ public class UserInOutServiceImpl implements UserInOutService {
             } else {
                 users = this.companyEmployeeRepository.findAll(); // if no userIds provided get all users.
             }
-
             Map<Integer, String> userMap = users.stream()
                     .collect(Collectors.toMap(CompanyEmployee::getEmployeeId,
-                            user -> user.getFirstName() + " " + user.getLastName()));
+                            user -> Stream.of(
+                                            user.getFirstName(),
+                                            user.getMiddleName(),
+                                            user.getLastName())
+                                    .filter(Objects::nonNull)
+                                    .filter(s -> !s.isBlank())
+                                    .collect(Collectors.joining(" "))));
 
             Specification<UserInOut> spec = UserInOutSpecification.createdOnGreaterThanEqual(start)
                     .and(UserInOutSpecification.createdOnLessThanEqual(end));

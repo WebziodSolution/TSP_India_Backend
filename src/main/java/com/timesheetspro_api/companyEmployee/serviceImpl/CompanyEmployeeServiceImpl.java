@@ -41,6 +41,8 @@ import java.time.temporal.ChronoUnit;
 
 import java.io.File;
 import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service(value = "companyEmployeeService")
 public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
@@ -155,7 +157,14 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
                     Map<String, Object> res = new HashMap<>();
                     CompanyEmployeeDto companyEmployeeDto = this.getEmployee(companyEmployee.getEmployeeId());
                     res.put("employeeId", companyEmployeeDto.getEmployeeId());
-                    res.put("userName", companyEmployeeDto.getFirstName() + " " + companyEmployeeDto.getLastName());
+                    String userName = Stream.of(
+                                    companyEmployeeDto.getFirstName(),
+                                    companyEmployeeDto.getMiddleName(),
+                                    companyEmployeeDto.getLastName())
+                            .filter(Objects::nonNull)
+                            .filter(s -> !s.isBlank())
+                            .collect(Collectors.joining(" "));
+                    res.put("userName", userName);
                     response.add(res);
                 }
             }
