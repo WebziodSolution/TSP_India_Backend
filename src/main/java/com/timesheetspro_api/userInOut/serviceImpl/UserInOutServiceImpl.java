@@ -210,11 +210,24 @@ public class UserInOutServiceImpl implements UserInOutService {
                     }
                 }
 
+                String userName = Stream.of(
+                                user.getFirstName(),
+                                user.getMiddleName(),
+                                user.getLastName())
+                        .filter(Objects::nonNull)
+                        .filter(s -> !s.isBlank())
+                        .collect(Collectors.joining(" "));
+
                 // --- Map each entry to its local date (for quick lookup) ---
-                Map<LocalDate, UserInOut> entryByDate = new HashMap<>();
+                Map<LocalDate, List<UserInOut>> entriesByDate = new HashMap<>();
                 for (UserInOut uio : entries) {
                     LocalDate date = uio.getCreatedOn().toInstant().atZone(ZoneId.of(timeZone)).toLocalDate();
-                    entryByDate.put(date, uio);
+                    entriesByDate.computeIfAbsent(date, k -> new ArrayList<>()).add(uio);
+                }
+
+                // Sort entries for each day chronologically by createdOn
+                for (List<UserInOut> dayEntries : entriesByDate.values()) {
+                    dayEntries.sort(Comparator.comparing(UserInOut::getCreatedOn, Comparator.nullsLast(Comparator.naturalOrder())));
                 }
 
                 // --- Pre-fetch Holidays (unchanged) ---
@@ -251,8 +264,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                 int rowIndex = 1;
 
                 for (LocalDate date : dateRange) {
-                    UserInOut uio = entryByDate.get(date);
-                    Map<String, Object> dataItem = new HashMap<>();
+                    List<UserInOut> dayEntries = entriesByDate.get(date);
 
                     // 1. Determine if today is a Holiday or a Weekly Off
                     boolean isHoliday = false;
@@ -273,52 +285,38 @@ public class UserInOutServiceImpl implements UserInOutService {
                     }
 
                     // 2. Determine status and update present/absent counters
-                    boolean hasValidTimes = (uio != null && uio.getTimeIn() != null && uio.getTimeOut() != null);
-                    String status;
-                    // Update counters for weekly off and holiday (count each day only once)
+                    boolean hasValidPresentEntry = false;
+                    if (dayEntries != null) {
+                        for (UserInOut uio : dayEntries) {
+                            if (uio.getTimeIn() != null && uio.getTimeOut() != null) {
+                                hasValidPresentEntry = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    // Update counters
                     if (isHoliday) {
                         holidayCount++;
                     }
-                    if (isWeeklyOff && !hasValidTimes) {
+                    if (isWeeklyOff && !hasValidPresentEntry) {
                         weeklyOffCount++;
                     }
 
-                    if (hasValidTimes) {
-                        // Present day with valid times
-                        Date timeIn = uio.getTimeIn();
-                        Date timeOut = uio.getTimeOut();
-                        long diffMs = timeOut.getTime() - timeIn.getTime();
-                        int grossMinutes = (int) (diffMs / (60 * 1000));
-                        int netMinutes = grossMinutes - breakMinutes;
-                        int overtimeMinutes = Math.max(0, grossMinutes - regularMinutes - breakMinutes);
-
-                        totalGrossMinutes += grossMinutes;
-                        totalOvertimeMinutes += overtimeMinutes;
-
-                        dataItem.put("id", uio.getId());
-                        dataItem.put("timeIn", this.commonService.convertDateToString(timeIn, timeZone));
-                        dataItem.put("timeOut", this.commonService.convertDateToString(timeOut, timeZone));
-                        dataItem.put("createdOn", this.commonService.convertDateToString(uio.getCreatedOn(), timeZone));
-                        dataItem.put("locationId", uio.getLocations() != null ? uio.getLocations().getId() : null);
-                        dataItem.put("regular", formatMinutesToHHmm(regularMinutes));
-                        dataItem.put("breakTime", formatMinutesToHHmm(breakMinutes));
-                        dataItem.put("workHours", formatMinutesToHHmm(netMinutes));
-                        dataItem.put("overtime", formatMinutesToHHmm(overtimeMinutes));
-                        dataItem.put("totalHours", formatMinutesToHHmm(grossMinutes));
-
-                        // Determine status
-                        if (isHoliday || isWeeklyOff) {
-                            status = "PW"; // Present on Weekly Off/Holiday
-                            presentCount++; // Count only normal day present
-                        } else {
-                            status = "P"; // Present on normal day
-                            presentCount++; // Count only normal day present
-                        }
+                    if (hasValidPresentEntry) {
+                        presentCount++;
                     } else {
-                        // Absent or incomplete day
+                        if (!isWeeklyOff && !isHoliday) {
+                            absentCount++;
+                        }
+                    }
+
+                    if (dayEntries == null || dayEntries.isEmpty()) {
+                        // Absent or incomplete day (no entries at all)
                         ZonedDateTime zdt = date.atStartOfDay(ZoneId.of(timeZone));
                         Date createdOnDate = Date.from(zdt.toInstant());
 
+                        Map<String, Object> dataItem = new HashMap<>();
                         dataItem.put("id", null);
                         dataItem.put("timeIn", null);
                         dataItem.put("timeOut", null);
@@ -330,35 +328,117 @@ public class UserInOutServiceImpl implements UserInOutService {
                         dataItem.put("overtime", "00:00");
                         dataItem.put("totalHours", "00:00");
 
-                        // Determine status
+                        String status;
                         if (isWeeklyOff) {
                             status = "W"; // Weekly Off (absent)
                         } else if (isHoliday) {
                             status = "H"; // Holiday (absent)
                         } else {
                             status = "A"; // Absent on normal day
-                            absentCount++; // Count only normal day absence
+                        }
+                        dataItem.put("status", status);
+                        dataItem.put("userName", userName);
+                        dataItem.put("rowId", rowIndex++);
+                        dataList.add(dataItem);
+                    } else {
+                        // 1. Calculate the day's total gross minutes from all valid entries
+                        int dayTotalGrossMinutes = 0;
+                        for (UserInOut uio : dayEntries) {
+                            if (uio.getTimeIn() != null && uio.getTimeOut() != null) {
+                                long diffMs = uio.getTimeOut().getTime() - uio.getTimeIn().getTime();
+                                int grossMinutes = (int) (diffMs / (60 * 1000));
+                                dayTotalGrossMinutes += grossMinutes;
+                            }
+                        }
+
+                        // 2. Compute the day's overall work hours and overtime
+                        int dayNetMinutes = Math.max(0, dayTotalGrossMinutes - breakMinutes);
+                        int dayOvertimeMinutes = Math.max(0, dayNetMinutes - regularMinutes);
+
+                        // Accumulate user totals
+                        totalGrossMinutes += dayTotalGrossMinutes;
+                        totalOvertimeMinutes += dayOvertimeMinutes;
+
+                        // 3. Output the entries
+                        boolean isFirst = true;
+                        for (UserInOut uio : dayEntries) {
+                            Map<String, Object> dataItem = new HashMap<>();
+                            boolean hasValidTimes = (uio.getTimeIn() != null && uio.getTimeOut() != null);
+
+                            if (hasValidTimes) {
+                                Date timeIn = uio.getTimeIn();
+                                Date timeOut = uio.getTimeOut();
+
+                                dataItem.put("id", uio.getId());
+                                dataItem.put("timeIn", this.commonService.convertDateToString(timeIn, timeZone));
+                                dataItem.put("timeOut", this.commonService.convertDateToString(timeOut, timeZone));
+                                dataItem.put("createdOn", this.commonService.convertDateToString(uio.getCreatedOn(), timeZone));
+                                dataItem.put("locationId", uio.getLocations() != null ? uio.getLocations().getId() : null);
+
+                                if (isFirst) {
+                                    dataItem.put("regular", formatMinutesToHHmm(regularMinutes));
+                                    dataItem.put("breakTime", formatMinutesToHHmm(breakMinutes));
+                                    dataItem.put("workHours", formatMinutesToHHmm(dayNetMinutes));
+                                    dataItem.put("overtime", formatMinutesToHHmm(dayOvertimeMinutes));
+                                    dataItem.put("totalHours", formatMinutesToHHmm(dayTotalGrossMinutes));
+
+                                    String status;
+                                    if (isHoliday || isWeeklyOff) {
+                                        status = "PW"; // Present on Weekly Off/Holiday
+                                    } else {
+                                        status = "P"; // Present on normal day
+                                    }
+                                    dataItem.put("status", status);
+                                    isFirst = false;
+                                } else {
+                                    dataItem.put("regular", "");
+                                    dataItem.put("breakTime", "");
+                                    dataItem.put("workHours", "");
+                                    dataItem.put("overtime", "");
+                                    dataItem.put("totalHours", "");
+                                    dataItem.put("status", "");
+                                }
+                            } else {
+                                // Incomplete entry (e.g. clock-in but no clock-out)
+                                dataItem.put("id", uio.getId());
+                                dataItem.put("timeIn", uio.getTimeIn() != null ? this.commonService.convertDateToString(uio.getTimeIn(), timeZone) : null);
+                                dataItem.put("timeOut", uio.getTimeOut() != null ? this.commonService.convertDateToString(uio.getTimeOut(), timeZone) : null);
+                                dataItem.put("createdOn", this.commonService.convertDateToString(uio.getCreatedOn(), timeZone));
+                                dataItem.put("locationId", uio.getLocations() != null ? uio.getLocations().getId() : null);
+
+                                if (isFirst) {
+                                    dataItem.put("regular", formatMinutesToHHmm(regularMinutes));
+                                    dataItem.put("breakTime", formatMinutesToHHmm(breakMinutes));
+                                    dataItem.put("workHours", "00:00");
+                                    dataItem.put("overtime", "00:00");
+                                    dataItem.put("totalHours", "00:00");
+
+                                    String status;
+                                    if (isWeeklyOff) {
+                                        status = "W"; // Weekly Off
+                                    } else if (isHoliday) {
+                                        status = "H"; // Holiday
+                                    } else {
+                                        status = "A"; // Absent/Incomplete on normal day
+                                    }
+                                    dataItem.put("status", status);
+                                    isFirst = false;
+                                } else {
+                                    dataItem.put("regular", "");
+                                    dataItem.put("breakTime", "");
+                                    dataItem.put("workHours", "");
+                                    dataItem.put("overtime", "");
+                                    dataItem.put("totalHours", "");
+                                    dataItem.put("status", "");
+                                }
+                            }
+
+                            dataItem.put("userName", userName);
+                            dataItem.put("rowId", rowIndex++);
+                            dataList.add(dataItem);
                         }
                     }
-                    String userName = Stream.of(
-                                    user.getFirstName(),
-                                    user.getMiddleName(),
-                                    user.getLastName())
-                            .filter(Objects::nonNull)
-                            .filter(s -> !s.isBlank())
-                            .collect(Collectors.joining(" "));
-                    dataItem.put("status", status);
-                    dataItem.put("userName", userName);
-                    dataItem.put("rowId", rowIndex++);
-                    dataList.add(dataItem);
                 }
-                String userName = Stream.of(
-                                user.getFirstName(),
-                                user.getMiddleName(),
-                                user.getLastName())
-                        .filter(Objects::nonNull)
-                        .filter(s -> !s.isBlank())
-                        .collect(Collectors.joining(" "));
                 // --- Build user group object with totals and new counters ---
                 Map<String, Object> userGroup = new HashMap<>();
                 userGroup.put("id", user.getEmployeeId());
@@ -484,78 +564,124 @@ public class UserInOutServiceImpl implements UserInOutService {
                 }
             }
 
-            // --- Map each entry to DTO with computed fields ---
-            List<UserInOutDto> userInOutDtoList = userInOutList.stream()
-                    .map(userInOut -> {
-                        UserInOutDto dto = new UserInOutDto();
-                        dto.setId(userInOut.getId());
-                        String userName = Stream.of(
-                                        userInOut.getUser().getFirstName(),
-                                        userInOut.getUser().getMiddleName(),
-                                        userInOut.getUser().getLastName())
-                                .filter(Objects::nonNull)
-                                .filter(s -> !s.isBlank())
-                                .collect(Collectors.joining(" "));
-                        dto.setUserName(userName);
-                        dto.setHourlyRate(userInOut.getUser().getHourlyRate());
-                        dto.setFirstName(userInOut.getUser().getFirstName());
-                        dto.setLastName(userInOut.getUser().getLastName());
-                        dto.setCreatedOn(this.commonService.convertDateToString(userInOut.getCreatedOn(), timeZone));
-                        dto.setTimeIn(this.commonService.convertDateToString(userInOut.getTimeIn(), timeZone));
-                        if (userInOut.getTimeOut() != null) {
-                            dto.setTimeOut(this.commonService.convertDateToString(userInOut.getTimeOut(), timeZone));
-                        }
-                        if (userInOut.getLocations() != null) {
-                            dto.setLocationId(userInOut.getLocations().getId());
-                        }
-                        dto.setUserId(userInOut.getUser().getEmployeeId());
+            // Group by Date (chronologically sorted) and then User ID
+            Map<LocalDate, Map<Integer, List<UserInOut>>> groupedByDateAndUser = new TreeMap<>();
+            for (UserInOut uio : userInOutList) {
+                LocalDate date = uio.getCreatedOn().toInstant().atZone(zone).toLocalDate();
+                int empId = uio.getUser().getEmployeeId();
 
-                        // --- Shift DTO (unchanged) ---
-                        CompanyShiftDto companyShiftDto = new CompanyShiftDto();
-                        CompanyEmployee companyEmployee = this.companyEmployeeRepository
-                                .findById(userInOut.getUser().getEmployeeId())
-                                .orElseThrow(() -> new RuntimeException("Employee not found"));
-                        if (companyEmployee.getCompanyShift() != null) {
-                            CompanyShift companyShift = this.companyShiftRepository
-                                    .findById(companyEmployee.getCompanyShift().getId())
-                                    .orElseThrow(() -> new RuntimeException("Shift not found"));
-                            companyShiftDto.setCompanyId(companyShift.getCompanyDetails().getId());
-                            BeanUtils.copyProperties(companyShift, companyShiftDto);
-                            dto.setCompanyShiftDto(companyShiftDto);
+                groupedByDateAndUser
+                        .computeIfAbsent(date, k -> new LinkedHashMap<>())
+                        .computeIfAbsent(empId, k -> new ArrayList<>())
+                        .add(uio);
+            }
+
+            // --- Map each grouped entry to DTO with computed fields ---
+            List<UserInOutDto> userInOutDtoList = new ArrayList<>();
+
+            for (Map.Entry<LocalDate, Map<Integer, List<UserInOut>>> dateEntry : groupedByDateAndUser.entrySet()) {
+                Map<Integer, List<UserInOut>> userMap = dateEntry.getValue();
+
+                for (Map.Entry<Integer, List<UserInOut>> userEntry : userMap.entrySet()) {
+                    int empId = userEntry.getKey();
+                    List<UserInOut> dayRecords = userEntry.getValue();
+
+                    EmployeeData empData = employeeDataMap.get(empId);
+                    int regularMinutes = empData != null ? empData.regularMinutes : 0;
+                    int breakMinutes = empData != null ? empData.breakMinutes : 0;
+
+                    // Sort the records for this day chronologically by createdOn
+                    dayRecords.sort(Comparator.comparing(UserInOut::getCreatedOn, Comparator.nullsLast(Comparator.naturalOrder())));
+
+                    // Consolidate dayRecords into a single DTO
+                    UserInOutDto dto = new UserInOutDto();
+
+                    UserInOut firstRecord = dayRecords.get(0);
+                    dto.setId(firstRecord.getId()); // Use first record's ID
+
+                    String userName = Stream.of(
+                                    firstRecord.getUser().getFirstName(),
+                                    firstRecord.getUser().getMiddleName(),
+                                    firstRecord.getUser().getLastName())
+                            .filter(Objects::nonNull)
+                            .filter(s -> !s.isBlank())
+                            .collect(Collectors.joining(" "));
+                    dto.setUserName(userName);
+                    dto.setHourlyRate(firstRecord.getUser().getHourlyRate());
+                    dto.setFirstName(firstRecord.getUser().getFirstName());
+                    dto.setLastName(firstRecord.getUser().getLastName());
+                    dto.setCreatedOn(this.commonService.convertDateToString(firstRecord.getCreatedOn(), timeZone));
+                    dto.setUserId(empId);
+                    if (firstRecord.getLocations() != null) {
+                        dto.setLocationId(firstRecord.getLocations().getId());
+                    }
+
+                    // Shift DTO
+                    CompanyShiftDto companyShiftDto = new CompanyShiftDto();
+                    CompanyEmployee companyEmployee = firstRecord.getUser();
+                    if (companyEmployee.getCompanyShift() != null) {
+                        CompanyShift companyShift = companyEmployee.getCompanyShift();
+                        companyShiftDto.setCompanyId(companyShift.getCompanyDetails().getId());
+                        BeanUtils.copyProperties(companyShift, companyShiftDto);
+                        dto.setCompanyShiftDto(companyShiftDto);
+                    }
+
+                    // Consolidated times and calculations
+                    Date firstTimeIn = null;
+                    Date lastTimeOut = null;
+                    int dayTotalGrossMinutes = 0;
+                    boolean hasAnyValidTimes = false;
+
+                    for (UserInOut record : dayRecords) {
+                        if (record.getTimeIn() != null) {
+                            if (firstTimeIn == null || record.getTimeIn().before(firstTimeIn)) {
+                                firstTimeIn = record.getTimeIn();
+                            }
                         }
-
-                        // --- Compute additional fields using pre‑fetched data ---
-                        EmployeeData empData = employeeDataMap.get(userInOut.getUser().getEmployeeId());
-                        int regularMinutes = empData != null ? empData.regularMinutes : 0;
-                        int breakMinutes = empData != null ? empData.breakMinutes : 0;
-
-                        if (userInOut.getTimeIn() != null && userInOut.getTimeOut() != null) {
-                            long diffMs = userInOut.getTimeOut().getTime() - userInOut.getTimeIn().getTime();
+                        if (record.getTimeOut() != null) {
+                            if (lastTimeOut == null || record.getTimeOut().after(lastTimeOut)) {
+                                lastTimeOut = record.getTimeOut();
+                            }
+                        }
+                        if (record.getTimeIn() != null && record.getTimeOut() != null) {
+                            hasAnyValidTimes = true;
+                            long diffMs = record.getTimeOut().getTime() - record.getTimeIn().getTime();
                             int grossMinutes = (int) (diffMs / (60 * 1000));
-                            int workMinutes = grossMinutes - breakMinutes;
-                            int overtimeMinutes = Math.max(0, grossMinutes - regularMinutes - breakMinutes);
-
-                            dto.setRegular(formatMinutesToHHmm(regularMinutes));
-                            dto.setBreakTime(formatMinutesToHHmm(breakMinutes));
-                            dto.setWorkHours(formatMinutesToHHmm(workMinutes));
-                            dto.setOvertime(formatMinutesToHHmm(overtimeMinutes));
-                            dto.setTotalHours(formatMinutesToHHmm(grossMinutes));
-                            dto.setStatus("P");
-                            dto.setDepartment(userInOut.getUser().getDepartment().getDepartmentName());
-                        } else {
-                            // Incomplete entry (e.g., only clock‑in, no clock‑out)
-                            dto.setRegular(formatMinutesToHHmm(regularMinutes));
-                            dto.setBreakTime(formatMinutesToHHmm(breakMinutes));
-                            dto.setWorkHours("00:00");
-                            dto.setOvertime("00:00");
-                            dto.setTotalHours("00:00");
-                            dto.setStatus("A"); // I = incomplete
-                            dto.setDepartment(userInOut.getUser().getDepartment().getDepartmentName());
+                            dayTotalGrossMinutes += grossMinutes;
                         }
-                        dto.setStatus(userInOut.getTimeIn() != null ? "P" : "A");
-                        return dto;
-                    })
-                    .collect(Collectors.toList());
+                    }
+
+                    if (firstTimeIn != null) {
+                        dto.setTimeIn(this.commonService.convertDateToString(firstTimeIn, timeZone));
+                    }
+                    if (lastTimeOut != null) {
+                        dto.setTimeOut(this.commonService.convertDateToString(lastTimeOut, timeZone));
+                    }
+
+                    if (hasAnyValidTimes) {
+                        int workMinutes = Math.max(0, dayTotalGrossMinutes - breakMinutes);
+                        int overtimeMinutes = Math.max(0, workMinutes - regularMinutes);
+
+                        dto.setRegular(formatMinutesToHHmm(regularMinutes));
+                        dto.setBreakTime(formatMinutesToHHmm(breakMinutes));
+                        dto.setWorkHours(formatMinutesToHHmm(workMinutes));
+                        dto.setOvertime(formatMinutesToHHmm(overtimeMinutes));
+                        dto.setTotalHours(formatMinutesToHHmm(dayTotalGrossMinutes));
+                        dto.setStatus("P");
+                    } else {
+                        dto.setRegular(formatMinutesToHHmm(regularMinutes));
+                        dto.setBreakTime(formatMinutesToHHmm(breakMinutes));
+                        dto.setWorkHours("00:00");
+                        dto.setOvertime("00:00");
+                        dto.setTotalHours("00:00");
+                        dto.setStatus("A");
+                    }
+                    dto.setDepartment(firstRecord.getUser().getDepartment().getDepartmentName());
+                    dto.setStatus(firstTimeIn != null ? "P" : "A");
+
+                    userInOutDtoList.add(dto);
+                }
+            }
 
             return userInOutDtoList;
         } catch (Exception e) {
