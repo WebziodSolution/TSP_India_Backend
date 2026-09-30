@@ -89,6 +89,13 @@ public class UserInOutServiceImpl implements UserInOutService {
         return LocalDate.parse(dateStr, formatter);
     }
 
+    private String getFullName(String firstName, String middleName, String lastName) {
+        return Stream.of(firstName, middleName, lastName)
+                .filter(Objects::nonNull)
+                .filter(name -> !name.isBlank())
+                .collect(Collectors.joining(" "));
+    }
+
     @Override
     public Map<String, Object> dashboardCounts(int companyId) {
         try {
@@ -109,12 +116,51 @@ public class UserInOutServiceImpl implements UserInOutService {
             calendar.set(Calendar.SECOND, 59);
             Date endOfDay = calendar.getTime();
 
-            Long countCheckedInUsers = this.userInOutRepository.countCheckedInUsers(companyId, startOfDay, endOfDay);
-            Long countCheckedOutUsers = this.userInOutRepository.countCheckedOutUsers(companyId, startOfDay, endOfDay);
-            Long getCompanyTotalUserCount = this.companyEmployeeRepository.getCompanyTotalUserCount(companyId);
-            res.put("countCheckedInUsers", countCheckedInUsers);
-            res.put("countCheckedOutUsers", countCheckedOutUsers);
-            res.put("companyTotalUserCount", getCompanyTotalUserCount);
+            List<UserInOut> inUsers = this.userInOutRepository.countCheckedInUsers(companyId, startOfDay, endOfDay);
+            List<UserInOut> outUsers = this.userInOutRepository.countCheckedOutUsers(companyId, startOfDay, endOfDay);
+            List<CompanyEmployee> companyEmployees = this.companyEmployeeRepository.findByCompanyId(companyId);
+            List<Map<String, Object>> employeesData = new ArrayList<>();
+            List<Map<String, Object>> inEmployeesData = new ArrayList<>();
+            List<Map<String, Object>> outEmployeesData = new ArrayList<>();
+
+            for (CompanyEmployee companyEmployee : companyEmployees) {
+                Map<String, Object> obj = new HashMap<>();
+                obj.put("fullname",
+                        getFullName(
+                                companyEmployee.getFirstName(),
+                                companyEmployee.getMiddleName(),
+                                companyEmployee.getLastName()
+                        ));
+                employeesData.add(obj);
+            }
+
+            for (UserInOut inuser : inUsers) {
+                Map<String, Object> obj = new HashMap<>();
+                obj.put("fullname",
+                        getFullName(
+                                inuser.getUser().getFirstName(),
+                                inuser.getUser().getMiddleName(),
+                                inuser.getUser().getLastName()
+                        ));
+                inEmployeesData.add(obj);
+            }
+            for (UserInOut inuser : outUsers) {
+                Map<String, Object> obj = new HashMap<>();
+                obj.put("fullname",
+                        getFullName(
+                                inuser.getUser().getFirstName(),
+                                inuser.getUser().getMiddleName(),
+                                inuser.getUser().getLastName()
+                        ));
+                outEmployeesData.add(obj);
+            }
+
+            res.put("countCheckedInUsers", inUsers.size());
+            res.put("countCheckedOutUsers", outUsers.size());
+            res.put("companyTotalUserCount", companyEmployees.size());
+            res.put("inUsersData", inEmployeesData);
+            res.put("outUserData", outEmployeesData);
+            res.put("totalUserData", employeesData);
 
             return res;
         } catch (Exception e) {
@@ -861,14 +907,14 @@ public class UserInOutServiceImpl implements UserInOutService {
                 // There is an open record → attempt to clock out
                 boolean updated = updateUserInOut(existing.getId(), userId);
                 if (updated) {
-                    return "updated:" + employee.getUsername();
+                    return "updated:" + employee.getFirstName() + " " + employee.getLastName();
                 } else {
-                    return "created:" + employee.getUsername();
+                    return "created:" + employee.getFirstName() + " " + employee.getLastName();
                 }
             } else {
                 // No open record → clock in (create new with current time)
                 createUserInOut(userId, locationId, companyId, new Date());
-                return "created:" + employee.getUsername();
+                return "created:" + employee.getFirstName() + " " + employee.getLastName();
             }
         } catch (Exception e) {
             e.printStackTrace();

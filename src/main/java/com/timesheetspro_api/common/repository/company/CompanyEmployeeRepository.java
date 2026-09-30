@@ -25,8 +25,8 @@ public interface CompanyEmployeeRepository extends JpaRepository<CompanyEmployee
     @Query("SELECT c FROM CompanyEmployee c WHERE c.companyDetails.id=:id AND c.isPt=true")
     List<CompanyEmployee> getReportByPT(int id);
 
-    @Query("SELECT COUNT(c) FROM CompanyEmployee c WHERE companyDetails.id=:id")
-    Long getCompanyTotalUserCount(int id);
+//    @Query("SELECT c FROM CompanyEmployee c WHERE companyDetails.id=:id")
+//    Long getCompanyTotalUserCount(int id);
 
     @Query("SELECT c FROM CompanyEmployee c WHERE c.companyDetails.companyNo=:companyNo AND c.userName=:userName AND c.email=:email")
     CompanyEmployee findByCompanyNoAndUserName(String companyNo, String userName, String email);

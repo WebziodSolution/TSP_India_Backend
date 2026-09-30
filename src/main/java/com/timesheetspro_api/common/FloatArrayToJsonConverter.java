@@ -23,17 +23,32 @@ public class FloatArrayToJsonConverter implements AttributeConverter<float[], St
         }
     }
 
+    // @Override
+    // public float[] convertToEntityAttribute(String dbData) {
+    // if (dbData == null || dbData.isEmpty()) {
+    // return null;
+    // }
+    // try {
+    // return objectMapper.readValue(dbData, float[].class);
+    // } catch (Exception e) {
+    // throw new RuntimeException("Could not convert JSON to float[]", e);
+    // }
+    // }
     @Override
     public float[] convertToEntityAttribute(String dbData) {
-        if (dbData == null || dbData.isEmpty()) {
+        if (dbData == null || dbData.trim().isEmpty() || "null".equalsIgnoreCase(dbData.trim())) {
             return null;
         }
         try {
+            dbData = dbData.trim();
+            // If double-serialized / stored as a quoted string literal
+            if (dbData.startsWith("\"") && dbData.endsWith("\"")) {
+                dbData = objectMapper.readValue(dbData, String.class);
+            }
             return objectMapper.readValue(dbData, float[].class);
         } catch (Exception e) {
-            throw new RuntimeException("Could not convert JSON to float[]", e);
+            throw new RuntimeException("Could not convert JSON to float[]: " + dbData, e);
         }
     }
+
 }
-
-
