@@ -1,4 +1,5 @@
 package com.timesheetspro_api.common.dto.UserInOut;
+
 import com.timesheetspro_api.common.dto.companyShiftDto.CompanyShiftDto;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -29,4 +30,12 @@ public class UserInOutDto {
     private String workHours;
     private String status;
     private String department;
+    private Integer rowId;
+    private Object todaySalary;
+    private Object foodCharge;
+    private Object netSalary;
+    private Object daySalary;
+    private Object otAmount;
+    private java.util.List<com.timesheetspro_api.common.dto.deductions.DeductionsDto> allowances;
+    private java.util.List<com.timesheetspro_api.common.dto.deductions.DeductionsDto> deductions;
 }

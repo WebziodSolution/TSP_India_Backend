@@ -19,6 +19,10 @@ import com.timesheetspro_api.common.service.CommonService;
 import com.timesheetspro_api.common.specification.UserInOutSpecification;
 import com.timesheetspro_api.holidayTemplateDetails.service.HolidayTemplateDetailsService;
 import com.timesheetspro_api.userInOut.service.UserInOutService;
+import com.timesheetspro_api.common.dto.deductions.DeductionsDto;
+import com.timesheetspro_api.common.model.deductions.Deductions;
+import com.timesheetspro_api.common.model.overtimeRules.OvertimeRules;
+import com.timesheetspro_api.common.repository.DeductionsRepository;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.RegionUtil;
 
@@ -29,6 +33,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -78,6 +84,9 @@ public class UserInOutServiceImpl implements UserInOutService {
     @Autowired
     private HolidayTemplateDetailsService holidayTemplateDetailsService;
 
+    @Autowired
+    private DeductionsRepository deductionsRepository;
+
     private LocalDate parseDateString(String dateStr) {
         if (dateStr == null)
             return null;
@@ -118,7 +127,8 @@ public class UserInOutServiceImpl implements UserInOutService {
 
             List<UserInOut> inUsers = this.userInOutRepository.countCheckedInUsers(companyId, startOfDay, endOfDay);
             List<UserInOut> outUsers = this.userInOutRepository.countCheckedOutUsers(companyId, startOfDay, endOfDay);
-            List<CompanyEmployee> companyEmployees = this.companyEmployeeRepository.findByCompanyId(companyId);
+            List<CompanyEmployee> companyEmployees = this.companyEmployeeRepository.findByCompanyId(companyId).stream()
+                    .filter((row) -> row.getIsActive() == 1).toList();
             List<Map<String, Object>> employeesData = new ArrayList<>();
             List<Map<String, Object>> inEmployeesData = new ArrayList<>();
             List<Map<String, Object>> outEmployeesData = new ArrayList<>();
@@ -129,8 +139,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                         getFullName(
                                 companyEmployee.getFirstName(),
                                 companyEmployee.getMiddleName(),
-                                companyEmployee.getLastName()
-                        ));
+                                companyEmployee.getLastName()));
                 employeesData.add(obj);
             }
 
@@ -140,8 +149,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                         getFullName(
                                 inuser.getUser().getFirstName(),
                                 inuser.getUser().getMiddleName(),
-                                inuser.getUser().getLastName()
-                        ));
+                                inuser.getUser().getLastName()));
                 inEmployeesData.add(obj);
             }
             for (UserInOut inuser : outUsers) {
@@ -150,8 +158,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                         getFullName(
                                 inuser.getUser().getFirstName(),
                                 inuser.getUser().getMiddleName(),
-                                inuser.getUser().getLastName()
-                        ));
+                                inuser.getUser().getLastName()));
                 outEmployeesData.add(obj);
             }
 
@@ -170,7 +177,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Override
     public Map<String, Object> getAllEntriesGroupByUser(List<Integer> userIds, String startDate, String endDate,
-                                                        String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
+            String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
         try {
             ZoneId zone = ZoneId.of(timeZone);
             Instant startInstant, endInstant;
@@ -243,23 +250,24 @@ public class UserInOutServiceImpl implements UserInOutService {
                 // --- Pre‑fetch shift data for this user (cached per user) ---
                 int regularMinutes = 0;
                 int breakMinutes = 0;
-                if (user.getCompanyShift() != null) {
-                    CompanyEmployee companyEmployee = this.companyEmployeeRepository.findById(user.getEmployeeId())
-                            .orElseThrow(() -> new RuntimeException("Employee not found"));
-                    if (companyEmployee.getCompanyShift() != null) {
-                        CompanyShift companyShift = this.companyShiftRepository
-                                .findById(companyEmployee.getCompanyShift().getId())
-                                .orElseThrow(() -> new RuntimeException("Shift not found"));
+                CompanyEmployee companyEmployee = this.companyEmployeeRepository.findById(user.getEmployeeId())
+                        .orElse(user);
+                if (companyEmployee.getCompanyShift() != null) {
+                    CompanyShift companyShift = this.companyShiftRepository
+                            .findById(companyEmployee.getCompanyShift().getId())
+                            .orElse(null);
+                    if (companyShift != null) {
+                        companyEmployee.setCompanyShift(companyShift);
                         Float regularHours = companyShift.getTotalHours();
                         regularMinutes = regularHours != null ? Math.round(regularHours * 60) : 0;
-                        breakMinutes = user.getLunchBreak() != null ? user.getLunchBreak() : 0;
                     }
                 }
+                breakMinutes = companyEmployee.getLunchBreak() != null ? companyEmployee.getLunchBreak() : 0;
 
                 String userName = Stream.of(
-                                user.getFirstName(),
-                                user.getMiddleName(),
-                                user.getLastName())
+                        user.getFirstName(),
+                        user.getMiddleName(),
+                        user.getLastName())
                         .filter(Objects::nonNull)
                         .filter(s -> !s.isBlank())
                         .collect(Collectors.joining(" "));
@@ -273,7 +281,8 @@ public class UserInOutServiceImpl implements UserInOutService {
 
                 // Sort entries for each day chronologically by createdOn
                 for (List<UserInOut> dayEntries : entriesByDate.values()) {
-                    dayEntries.sort(Comparator.comparing(UserInOut::getCreatedOn, Comparator.nullsLast(Comparator.naturalOrder())));
+                    dayEntries.sort(Comparator.comparing(UserInOut::getCreatedOn,
+                            Comparator.nullsLast(Comparator.naturalOrder())));
                 }
 
                 // --- Pre-fetch Holidays (unchanged) ---
@@ -308,6 +317,8 @@ public class UserInOutServiceImpl implements UserInOutService {
                 int totalGrossMinutes = 0;
                 int totalOvertimeMinutes = 0;
                 int rowIndex = 1;
+                Map<LocalDate, Long> dailyWorkedMinutes = new HashMap<>();
+                Set<LocalDate> actualWorkDays = new HashSet<>();
 
                 for (LocalDate date : dateRange) {
                     List<UserInOut> dayEntries = entriesByDate.get(date);
@@ -383,6 +394,31 @@ public class UserInOutServiceImpl implements UserInOutService {
                             status = "A"; // Absent on normal day
                         }
                         dataItem.put("status", status);
+
+                        boolean isHourlyEmp = companyEmployee.getEmployeeType() != null
+                                && companyEmployee.getEmployeeType().getId() == 2
+                                && companyEmployee.getHourlyRate() != null;
+                        double todaySalary = 0.0;
+                        double foodCharge = 0.0;
+                        if ((isWeeklyOff || isHoliday) && !isHourlyEmp) {
+                            double monthlySalary = companyEmployee.getBasicSalary() != null
+                                    ? companyEmployee.getBasicSalary()
+                                    : 0.0;
+                            todaySalary = Math.round((monthlySalary / 30.0) * 100.0) / 100.0;
+                            String canteenType = companyEmployee.getCanteenType();
+                            if (canteenType != null && !"No Canteen".equalsIgnoreCase(canteenType)) {
+                                double monthlyCanteen = companyEmployee.getCanteenAmount() != null
+                                        ? companyEmployee.getCanteenAmount()
+                                        : 0.0;
+                                foodCharge = Math.round((monthlyCanteen / 30.0) * 100.0) / 100.0;
+                            }
+                        }
+                        double netSalary = Math.round((todaySalary - foodCharge) * 100.0) / 100.0;
+                        dataItem.put("todaySalary", todaySalary);
+                        dataItem.put("foodCharge", foodCharge);
+                        dataItem.put("netSalary", netSalary);
+                        dataItem.put("otAmount", 0);
+
                         dataItem.put("userName", userName);
                         dataItem.put("rowId", rowIndex++);
                         dataList.add(dataItem);
@@ -405,6 +441,16 @@ public class UserInOutServiceImpl implements UserInOutService {
                         totalGrossMinutes += dayTotalGrossMinutes;
                         totalOvertimeMinutes += dayOvertimeMinutes;
 
+                        if (dayTotalGrossMinutes > 0) {
+                            dailyWorkedMinutes.put(date, (long) dayNetMinutes);
+                            actualWorkDays.add(date);
+                        }
+
+                        double daySalary = calculateTodaySalary(companyEmployee, dayNetMinutes);
+                        double dayFoodCharge = calculateFoodCharge(companyEmployee, dayNetMinutes);
+                        double dayNetSalary = Math.round((daySalary - dayFoodCharge) * 100.0) / 100.0;
+                        int dayOtAmount = calculateDailyOvertimeAmount(companyEmployee, dayNetMinutes);
+
                         // 3. Output the entries
                         boolean isFirst = true;
                         for (UserInOut uio : dayEntries) {
@@ -418,8 +464,10 @@ public class UserInOutServiceImpl implements UserInOutService {
                                 dataItem.put("id", uio.getId());
                                 dataItem.put("timeIn", this.commonService.convertDateToString(timeIn, timeZone));
                                 dataItem.put("timeOut", this.commonService.convertDateToString(timeOut, timeZone));
-                                dataItem.put("createdOn", this.commonService.convertDateToString(uio.getCreatedOn(), timeZone));
-                                dataItem.put("locationId", uio.getLocations() != null ? uio.getLocations().getId() : null);
+                                dataItem.put("createdOn",
+                                        this.commonService.convertDateToString(uio.getCreatedOn(), timeZone));
+                                dataItem.put("locationId",
+                                        uio.getLocations() != null ? uio.getLocations().getId() : null);
 
                                 if (isFirst) {
                                     dataItem.put("regular", formatMinutesToHHmm(regularMinutes));
@@ -435,6 +483,10 @@ public class UserInOutServiceImpl implements UserInOutService {
                                         status = "P"; // Present on normal day
                                     }
                                     dataItem.put("status", status);
+                                    dataItem.put("todaySalary", daySalary);
+                                    dataItem.put("foodCharge", dayFoodCharge);
+                                    dataItem.put("netSalary", dayNetSalary);
+                                    dataItem.put("otAmount", dayOtAmount);
                                     isFirst = false;
                                 } else {
                                     dataItem.put("regular", "");
@@ -443,14 +495,26 @@ public class UserInOutServiceImpl implements UserInOutService {
                                     dataItem.put("overtime", "");
                                     dataItem.put("totalHours", "");
                                     dataItem.put("status", "");
+                                    dataItem.put("todaySalary", "");
+                                    dataItem.put("foodCharge", "");
+                                    dataItem.put("netSalary", "");
+                                    dataItem.put("otAmount", "");
                                 }
                             } else {
                                 // Incomplete entry (e.g. clock-in but no clock-out)
                                 dataItem.put("id", uio.getId());
-                                dataItem.put("timeIn", uio.getTimeIn() != null ? this.commonService.convertDateToString(uio.getTimeIn(), timeZone) : null);
-                                dataItem.put("timeOut", uio.getTimeOut() != null ? this.commonService.convertDateToString(uio.getTimeOut(), timeZone) : null);
-                                dataItem.put("createdOn", this.commonService.convertDateToString(uio.getCreatedOn(), timeZone));
-                                dataItem.put("locationId", uio.getLocations() != null ? uio.getLocations().getId() : null);
+                                dataItem.put("timeIn",
+                                        uio.getTimeIn() != null
+                                                ? this.commonService.convertDateToString(uio.getTimeIn(), timeZone)
+                                                : null);
+                                dataItem.put("timeOut",
+                                        uio.getTimeOut() != null
+                                                ? this.commonService.convertDateToString(uio.getTimeOut(), timeZone)
+                                                : null);
+                                dataItem.put("createdOn",
+                                        this.commonService.convertDateToString(uio.getCreatedOn(), timeZone));
+                                dataItem.put("locationId",
+                                        uio.getLocations() != null ? uio.getLocations().getId() : null);
 
                                 if (isFirst) {
                                     dataItem.put("regular", formatMinutesToHHmm(regularMinutes));
@@ -468,6 +532,10 @@ public class UserInOutServiceImpl implements UserInOutService {
                                         status = "A"; // Absent/Incomplete on normal day
                                     }
                                     dataItem.put("status", status);
+                                    dataItem.put("todaySalary", 0);
+                                    dataItem.put("foodCharge", 0);
+                                    dataItem.put("netSalary", 0);
+                                    dataItem.put("otAmount", 0);
                                     isFirst = false;
                                 } else {
                                     dataItem.put("regular", "");
@@ -476,6 +544,10 @@ public class UserInOutServiceImpl implements UserInOutService {
                                     dataItem.put("overtime", "");
                                     dataItem.put("totalHours", "");
                                     dataItem.put("status", "");
+                                    dataItem.put("todaySalary", "");
+                                    dataItem.put("foodCharge", "");
+                                    dataItem.put("netSalary", "");
+                                    dataItem.put("otAmount", "");
                                 }
                             }
 
@@ -489,6 +561,21 @@ public class UserInOutServiceImpl implements UserInOutService {
                 Map<String, Object> userGroup = new HashMap<>();
                 userGroup.put("id", user.getEmployeeId());
                 userGroup.put("username", userName);
+
+                Float hourlyRate = companyEmployee.getHourlyRate() != null ? companyEmployee.getHourlyRate()
+                        : user.getHourlyRate();
+                Integer basicSalary = companyEmployee.getBasicSalary() != null ? companyEmployee.getBasicSalary()
+                        : user.getBasicSalary();
+
+                if (hourlyRate != null && hourlyRate > 0) {
+                    userGroup.put("hourlyRate", hourlyRate);
+                    userGroup.put("hourRate", hourlyRate);
+                } else if (basicSalary != null && basicSalary > 0) {
+                    BigDecimal daySalary = BigDecimal.valueOf(basicSalary.doubleValue())
+                            .divide(BigDecimal.valueOf(30), 2, RoundingMode.HALF_UP);
+                    userGroup.put("daySalary", daySalary);
+                }
+
                 // Add the new counters right after username
                 userGroup.put("presentCount", presentCount); // P
                 userGroup.put("absentCount", absentCount); // A
@@ -498,6 +585,18 @@ public class UserInOutServiceImpl implements UserInOutService {
                 userGroup.put("data", dataList);
                 userGroup.put("totalHours", formatMinutesToHHmm(totalGrossMinutes));
                 userGroup.put("totalOvertime", formatMinutesToHHmm(totalOvertimeMinutes));
+
+                int totalOtAmount = calculateOvertimeAmount(companyEmployee, dailyWorkedMinutes, actualWorkDays);
+                List<DeductionsDto> userAllowances = calculateTotalAllowanceAndDeductions(user.getEmployeeId(),
+                        "Allowance");
+                List<DeductionsDto> userDeductions = calculateTotalAllowanceAndDeductions(user.getEmployeeId(),
+                        "Deduction");
+
+                userGroup.put("otAmount", totalOtAmount);
+                userGroup.put("totalOtAmount", totalOtAmount);
+                userGroup.put("allowances", userAllowances);
+                userGroup.put("deductions", userDeductions);
+
                 userGroups.add(userGroup);
             }
 
@@ -514,7 +613,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Override
     public List<UserInOutDto> getAllEntriesByUserId(List<Integer> userIds, String startDate, String endDate,
-                                                    String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
+            String timeZone, List<Integer> locationIds, List<Integer> departmentIds, Integer companyId) {
         try {
             // // --- Date handling using java.time ---
             ZoneId zone = ZoneId.of(timeZone);
@@ -595,9 +694,11 @@ public class UserInOutServiceImpl implements UserInOutService {
 
             // --- Pre‑fetch all employees (and their shift & lunch break) in one query ---
             Map<Integer, EmployeeData> employeeDataMap = new HashMap<>();
+            Map<Integer, CompanyEmployee> employeeMap = new HashMap<>();
             if (!distinctUserIds.isEmpty()) {
                 List<CompanyEmployee> employees = companyEmployeeRepository.findAllById(distinctUserIds);
                 for (CompanyEmployee emp : employees) {
+                    employeeMap.put(emp.getEmployeeId(), emp);
                     int regMinutes = 0;
                     int breakMinutes = emp.getLunchBreak() != null ? emp.getLunchBreak() : 0;
                     if (emp.getCompanyShift() != null) {
@@ -624,6 +725,9 @@ public class UserInOutServiceImpl implements UserInOutService {
 
             // --- Map each grouped entry to DTO with computed fields ---
             List<UserInOutDto> userInOutDtoList = new ArrayList<>();
+            int rowIndex = 1;
+            Map<Integer, List<DeductionsDto>> userAllowancesMap = new HashMap<>();
+            Map<Integer, List<DeductionsDto>> userDeductionsMap = new HashMap<>();
 
             for (Map.Entry<LocalDate, Map<Integer, List<UserInOut>>> dateEntry : groupedByDateAndUser.entrySet()) {
                 Map<Integer, List<UserInOut>> userMap = dateEntry.getValue();
@@ -635,9 +739,11 @@ public class UserInOutServiceImpl implements UserInOutService {
                     EmployeeData empData = employeeDataMap.get(empId);
                     int regularMinutes = empData != null ? empData.regularMinutes : 0;
                     int breakMinutes = empData != null ? empData.breakMinutes : 0;
+                    CompanyEmployee emp = employeeMap.get(empId);
 
                     // Sort the records for this day chronologically by createdOn
-                    dayRecords.sort(Comparator.comparing(UserInOut::getCreatedOn, Comparator.nullsLast(Comparator.naturalOrder())));
+                    dayRecords.sort(Comparator.comparing(UserInOut::getCreatedOn,
+                            Comparator.nullsLast(Comparator.naturalOrder())));
 
                     // Consolidate dayRecords into a single DTO
                     UserInOutDto dto = new UserInOutDto();
@@ -646,14 +752,23 @@ public class UserInOutServiceImpl implements UserInOutService {
                     dto.setId(firstRecord.getId()); // Use first record's ID
 
                     String userName = Stream.of(
-                                    firstRecord.getUser().getFirstName(),
-                                    firstRecord.getUser().getMiddleName(),
-                                    firstRecord.getUser().getLastName())
+                            firstRecord.getUser().getFirstName(),
+                            firstRecord.getUser().getMiddleName(),
+                            firstRecord.getUser().getLastName())
                             .filter(Objects::nonNull)
                             .filter(s -> !s.isBlank())
                             .collect(Collectors.joining(" "));
                     dto.setUserName(userName);
-                    dto.setHourlyRate(firstRecord.getUser().getHourlyRate());
+                    dto.setRowId(rowIndex++);
+                    CompanyEmployee empObj = emp != null ? emp : firstRecord.getUser();
+                    if (empObj != null) {
+                        dto.setHourlyRate(empObj.getHourlyRate());
+                        if (empObj.getBasicSalary() != null && empObj.getBasicSalary() > 0) {
+                            BigDecimal daySal = BigDecimal.valueOf(empObj.getBasicSalary().doubleValue())
+                                    .divide(BigDecimal.valueOf(30), 2, RoundingMode.HALF_UP);
+                            dto.setDaySalary(daySal);
+                        }
+                    }
                     dto.setFirstName(firstRecord.getUser().getFirstName());
                     dto.setLastName(firstRecord.getUser().getLastName());
                     dto.setCreatedOn(this.commonService.convertDateToString(firstRecord.getCreatedOn(), timeZone));
@@ -714,6 +829,16 @@ public class UserInOutServiceImpl implements UserInOutService {
                         dto.setOvertime(formatMinutesToHHmm(overtimeMinutes));
                         dto.setTotalHours(formatMinutesToHHmm(dayTotalGrossMinutes));
                         dto.setStatus("P");
+
+                        double todaySalary = calculateTodaySalary(emp != null ? emp : companyEmployee, workMinutes);
+                        double foodCharge = calculateFoodCharge(emp != null ? emp : companyEmployee, workMinutes);
+                        double netSalary = Math.round((todaySalary - foodCharge) * 100.0) / 100.0;
+                        dto.setTodaySalary(todaySalary);
+                        dto.setFoodCharge(foodCharge);
+                        dto.setNetSalary(netSalary);
+
+                        int dayOtAmount = calculateDailyOvertimeAmount(empObj, workMinutes);
+                        dto.setOtAmount(dayOtAmount);
                     } else {
                         dto.setRegular(formatMinutesToHHmm(regularMinutes));
                         dto.setBreakTime(formatMinutesToHHmm(breakMinutes));
@@ -721,9 +846,20 @@ public class UserInOutServiceImpl implements UserInOutService {
                         dto.setOvertime("00:00");
                         dto.setTotalHours("00:00");
                         dto.setStatus("A");
+                        dto.setTodaySalary(0);
+                        dto.setFoodCharge(0);
+                        dto.setNetSalary(0);
+                        dto.setOtAmount(0);
                     }
                     dto.setDepartment(firstRecord.getUser().getDepartment().getDepartmentName());
                     dto.setStatus(firstTimeIn != null ? "P" : "A");
+
+                    List<DeductionsDto> userAllowances = userAllowancesMap.computeIfAbsent(empId,
+                            id -> calculateTotalAllowanceAndDeductions(id, "Allowance"));
+                    List<DeductionsDto> userDeductions = userDeductionsMap.computeIfAbsent(empId,
+                            id -> calculateTotalAllowanceAndDeductions(id, "Deduction"));
+                    dto.setAllowances(userAllowances);
+                    dto.setDeductions(userDeductions);
 
                     userInOutDtoList.add(dto);
                 }
@@ -752,6 +888,222 @@ public class UserInOutServiceImpl implements UserInOutService {
         int hours = minutes / 60;
         int mins = minutes % 60;
         return String.format("%02d:%02d", hours, mins);
+    }
+
+    private double calculateTodaySalary(CompanyEmployee employee, int workMinutes) {
+        if (employee == null)
+            return 0.0;
+        boolean isHourly = employee.getEmployeeType() != null
+                && employee.getEmployeeType().getId() == 2
+                && employee.getHourlyRate() != null;
+        if (isHourly) {
+            long hrs = workMinutes / 60;
+            long mins = workMinutes % 60;
+            double hourlyRate = employee.getHourlyRate();
+            double payForWorked = (hrs * hourlyRate) + (mins * hourlyRate / 60.0);
+            return Math.round(payForWorked * 100.0) / 100.0;
+        } else {
+            double monthlySalary = employee.getBasicSalary() != null ? employee.getBasicSalary() : 0.0;
+            double dailyRate = monthlySalary / 30.0;
+            return Math.round(dailyRate * 100.0) / 100.0;
+        }
+    }
+
+    private double calculateFoodCharge(CompanyEmployee employee, int workMinutes) {
+        if (employee == null)
+            return 0.0;
+        String canteenType = employee.getCanteenType();
+        if (canteenType == null || "No Canteen".equalsIgnoreCase(canteenType)) {
+            return 0.0;
+        }
+
+        int canteenAmount = employee.getCanteenAmount() != null ? employee.getCanteenAmount() : 0;
+        if (canteenAmount <= 0) {
+            return 0.0;
+        }
+
+        boolean isHourly = employee.getEmployeeType() != null
+                && employee.getEmployeeType().getId() == 2
+                && employee.getHourlyRate() != null;
+
+        if (isHourly) {
+            if ("Labour Type".equals(canteenType)) {
+                long threshold = 13 * 60; // 13 hours (780 minutes)
+                if (workMinutes > threshold) {
+                    return (double) canteenAmount;
+                } else {
+                    return (double) (canteenAmount * 2);
+                }
+            } else if ("Office Type".equals(canteenType)) {
+                return (double) canteenAmount;
+            } else {
+                return 0.0;
+            }
+        } else {
+            // For Salaried employee, canteen amount is monthly, pass getCanteenAmount / 30
+            return Math.round((canteenAmount / 30.0) * 100.0) / 100.0;
+        }
+    }
+
+    // Helper method to calculate overtime amount for a date range (matches
+    // buildEmployeeSalaryStatement)
+    private int calculateOvertimeAmount(CompanyEmployee employee, Map<LocalDate, Long> dailyWorkedMinutes,
+            Set<LocalDate> actualWorkDays) {
+        if (employee == null || employee.getOvertimeRules() == null) {
+            return 0;
+        }
+
+        if (employee.getEmployeeType() != null && employee.getEmployeeType().getId() == 2) {
+            return 0;
+        }
+
+        OvertimeRules rule = employee.getOvertimeRules();
+        Float otPayPerSlab = rule.getOtAmount() != null ? rule.getOtAmount() : 0f;
+        int dailySalary = 0;
+
+        if (employee.getEmployeeType() != null && employee.getEmployeeType().getId() == 2
+                && employee.getHourlyRate() != null) {
+            dailySalary = (int) (employee.getCompanyShift() != null
+                    && employee.getCompanyShift().getTotalHours() != null
+                            ? employee.getCompanyShift().getTotalHours() * employee.getHourlyRate()
+                            : 0);
+        } else {
+            dailySalary = employee.getBasicSalary() != null ? employee.getBasicSalary() / 30 : 0;
+        }
+
+        float employeeShiftHours = employee.getCompanyShift() != null
+                && employee.getCompanyShift().getTotalHours() != null
+                        ? employee.getCompanyShift().getTotalHours()
+                        : 0f;
+        float shiftMinutes = employeeShiftHours * 60f;
+        String otType = rule.getOtType() != null ? rule.getOtType().trim().toLowerCase() : "";
+
+        int totalOtAmount = 0;
+        for (LocalDate date : actualWorkDays) {
+            long workedMin = dailyWorkedMinutes.getOrDefault(date, 0L);
+            long dailyOtMinutes = Math.max(0, workedMin - (long) shiftMinutes);
+            if (dailyOtMinutes <= 0) {
+                continue;
+            }
+
+            switch (otType) {
+                case "fixed amount":
+                case "fixed amount per hour":
+                    long otHours = (long) Math.ceil(dailyOtMinutes / 60.0);
+                    totalOtAmount += (int) (otHours * otPayPerSlab);
+                    break;
+                case "1 day salary":
+                    totalOtAmount += dailySalary;
+                    break;
+                case "1.5 day salary":
+                    totalOtAmount += (int) Math.round(dailySalary * 1.5);
+                    break;
+                case "2 day salary":
+                    totalOtAmount += dailySalary * 2;
+                    break;
+                case "2.5 day salary":
+                    totalOtAmount += (int) Math.round(dailySalary * 2.5);
+                    break;
+                case "3 day salary":
+                    totalOtAmount += dailySalary * 3;
+                    break;
+            }
+        }
+        return totalOtAmount;
+    }
+
+    // Helper method to calculate overtime amount for a single day
+    private int calculateDailyOvertimeAmount(CompanyEmployee employee, int workMinutes) {
+        if (employee == null || employee.getOvertimeRules() == null) {
+            return 0;
+        }
+
+        if (employee.getEmployeeType() != null && employee.getEmployeeType().getId() == 2) {
+            return 0;
+        }
+
+        float employeeShiftHours = employee.getCompanyShift() != null
+                && employee.getCompanyShift().getTotalHours() != null
+                        ? employee.getCompanyShift().getTotalHours()
+                        : 0f;
+        float shiftMinutes = employeeShiftHours * 60f;
+        long dailyOtMinutes = Math.max(0, workMinutes - (long) shiftMinutes);
+        if (dailyOtMinutes <= 0) {
+            return 0;
+        }
+
+        OvertimeRules rule = employee.getOvertimeRules();
+        Float otPayPerSlab = rule.getOtAmount() != null ? rule.getOtAmount() : 0f;
+        int dailySalary = 0;
+        if (employee.getEmployeeType() != null && employee.getEmployeeType().getId() == 2
+                && employee.getHourlyRate() != null) {
+            dailySalary = (int) (employee.getCompanyShift() != null
+                    && employee.getCompanyShift().getTotalHours() != null
+                            ? employee.getCompanyShift().getTotalHours() * employee.getHourlyRate()
+                            : 0);
+        } else {
+            dailySalary = employee.getBasicSalary() != null ? employee.getBasicSalary() / 30 : 0;
+        }
+
+        String otType = rule.getOtType() != null ? rule.getOtType().trim().toLowerCase() : "";
+        switch (otType) {
+            case "fixed amount":
+            case "fixed amount per hour":
+                long otHours = (long) Math.ceil(dailyOtMinutes / 60.0);
+                return (int) (otHours * otPayPerSlab);
+            case "1 day salary":
+                return dailySalary;
+            case "1.5 day salary":
+                return (int) Math.round(dailySalary * 1.5);
+            case "2 day salary":
+                return dailySalary * 2;
+            case "2.5 day salary":
+                return (int) Math.round(dailySalary * 2.5);
+            case "3 day salary":
+                return dailySalary * 3;
+            default:
+                return 0;
+        }
+    }
+
+    // Helper method to calculate allowance/deductions for a user
+    private List<DeductionsDto> calculateTotalAllowanceAndDeductions(Integer userId, String type) {
+        List<DeductionsDto> deductionsDtoList = new ArrayList<>();
+        if (userId == null) {
+            return deductionsDtoList;
+        }
+        List<Deductions> deductionsList = this.deductionsRepository.findByEmployeeIdAndType(userId, type);
+        if (deductionsList != null) {
+            for (Deductions deductions : deductionsList) {
+                DeductionsDto deductionsDto = new DeductionsDto();
+                deductionsDto.setId(deductions.getId());
+                deductionsDto.setEmployeeId(userId);
+                deductionsDto.setLabel(deductions.getLabel());
+                deductionsDto.setName(deductions.getLabel());
+                deductionsDto.setAmount(deductions.getAmount());
+                deductionsDto.setType(deductions.getType());
+                deductionsDtoList.add(deductionsDto);
+            }
+        }
+        return deductionsDtoList;
+    }
+
+    private int hhDotMmToMinutes(Object value) {
+        if (value == null)
+            return 0;
+
+        try {
+            double val = Double.parseDouble(value.toString());
+            int hours = (int) val;
+            int minutes = (int) Math.round((val - hours) * 100);
+
+            if (minutes < 0 || minutes > 59) {
+                return hours * 60;
+            }
+            return (hours * 60) + minutes;
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     @Override
@@ -1032,7 +1384,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Transactional(readOnly = true)
     public Map<String, Object> getTimeInOutReport(List<Integer> userIds, String startDate, String endDate,
-                                                  String timeZone, Integer companyId) {
+            String timeZone, Integer companyId) {
         try {
             SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
             dateFormat.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -1060,9 +1412,9 @@ public class UserInOutServiceImpl implements UserInOutService {
             Map<Integer, String> userMap = users.stream()
                     .collect(Collectors.toMap(CompanyEmployee::getEmployeeId,
                             user -> Stream.of(
-                                            user.getFirstName(),
-                                            user.getMiddleName(),
-                                            user.getLastName())
+                                    user.getFirstName(),
+                                    user.getMiddleName(),
+                                    user.getLastName())
                                     .filter(Objects::nonNull)
                                     .filter(s -> !s.isBlank())
                                     .collect(Collectors.joining(" "))));
@@ -1103,7 +1455,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                                             "timeOut",
                                             record.getTimeOut() != null
                                                     ? this.commonService.convertDateToString(record.getTimeOut(),
-                                                    timeZone)
+                                                            timeZone)
                                                     : "")));
 
                     monthlyRecords.computeIfAbsent(month, m -> new ArrayList<>()).add(dayRecord);
@@ -1124,7 +1476,7 @@ public class UserInOutServiceImpl implements UserInOutService {
     }
 
     public Workbook generateExcelReport(Map<String, Object> data, String startDateStr, String endDateStr,
-                                        String timeZone) {
+            String timeZone) {
         try {
             Workbook workbook = new XSSFWorkbook();
             SimpleDateFormat jsonDateFormat = new SimpleDateFormat("MM/dd/yyyy, hh:mm:ss a");
@@ -1422,7 +1774,7 @@ public class UserInOutServiceImpl implements UserInOutService {
     }
 
     private CellStyle createCellStyle(Workbook workbook, boolean isBold, boolean hasBorders, boolean isCentered,
-                                      boolean isVerticallyCentered, int fontSize) {
+            boolean isVerticallyCentered, int fontSize) {
         CellStyle style = workbook.createCellStyle();
         Font font = workbook.createFont();
 
@@ -1498,7 +1850,7 @@ public class UserInOutServiceImpl implements UserInOutService {
     }
 
     private boolean handleTimeOutUpdate(CompanyEmployee employee, UserInOut existingRecord,
-                                        Date timeOut, Integer locationId, Integer companyId) {
+            Date timeOut, Integer locationId, Integer companyId) {
 
         String autoTimeInAfter = employee.getCompanyDetails().getAutoTimeInAfterHours();
 
@@ -1534,8 +1886,8 @@ public class UserInOutServiceImpl implements UserInOutService {
         // 5️⃣ Check if session duration exceeds the limit
         if (!sessionDuration.isNegative() && sessionDuration.compareTo(allowedLimit) > 0) {
             // Gap exceeded → create new record for next day (timeOut + 24 hours)
-//            Instant nextDayInstant = timeOut.toInstant().plus(Duration.ofDays(1));
-//            Date nextDayTimeIn = Date.from(nextDayInstant);
+            // Instant nextDayInstant = timeOut.toInstant().plus(Duration.ofDays(1));
+            // Date nextDayTimeIn = Date.from(nextDayInstant);
             Date nextDayTimeIn = Date.from(timeOut.toInstant());
             createUserInOut(employee.getEmployeeId(), locationId, companyId, nextDayTimeIn);
             return false;

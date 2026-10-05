@@ -150,7 +150,7 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
     public List<Map<String, Object>> getAllEmployeeListByCompanyId(int companyId) {
         try {
             List<Map<String, Object>> response = new ArrayList<>();
-            List<CompanyEmployee> companyEmployeeList = this.companyEmployeeRepository.findByCompanyId(companyId);
+            List<CompanyEmployee> companyEmployeeList = this.companyEmployeeRepository.findByCompanyId(companyId).stream().filter((row)->row.getIsActive() == 1).toList();
 
             if (!companyEmployeeList.isEmpty()) {
                 for (CompanyEmployee companyEmployee : companyEmployeeList) {
@@ -177,7 +177,7 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
     @Override
     public List<CompanyEmployeeDto> getAllEmployeeByCompanyId(int companyId) {
         try {
-            List<CompanyEmployee> companyEmployeeList = this.companyEmployeeRepository.findAllContractors(companyId);
+            List<CompanyEmployee> companyEmployeeList = this.companyEmployeeRepository.findAllContractors(companyId).stream().filter((row)->row.getIsActive() == 1).toList();
             List<CompanyEmployeeDto> companyEmployeeDtoList = new ArrayList<>();
 
             if (!companyEmployeeList.isEmpty()) {
@@ -302,7 +302,7 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
                 HolidayTemplates holidayTemplates = this.holidayTemplatesRepository.findById(companyEmployeeDto.getHolidayTemplateId()).orElseThrow(() -> new RuntimeException("Holiday template not found"));
                 companyEmployee.setHolidayTemplates(holidayTemplates);
             }
-
+            companyEmployee.setIsActive(companyEmployeeDto.getIsActive());
             companyEmployee.setCompanyDetails(companyDetails);
             companyEmployee.setRoles(companyEmployeeRoles);
             companyEmployee.setDepartment(department);
@@ -360,6 +360,7 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
                 HolidayTemplates holidayTemplates = this.holidayTemplatesRepository.findById(companyEmployeeDto.getHolidayTemplateId()).orElseThrow(() -> new RuntimeException("Holiday template not found"));
                 companyEmployee.setHolidayTemplates(holidayTemplates);
             }
+            companyEmployee.setIsActive(companyEmployeeDto.getIsActive());
             companyEmployee.setCompanyShift(companyShift);
             companyEmployee.setCompanyDetails(companyDetails);
             companyEmployee.setRoles(companyEmployeeRoles);

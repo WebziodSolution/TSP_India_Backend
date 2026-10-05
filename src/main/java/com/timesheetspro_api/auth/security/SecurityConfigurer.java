@@ -64,6 +64,7 @@ public class SecurityConfigurer {
         configuration.addAllowedMethod("*"); // Allows all HTTP methods, adjust as needed
         configuration.addAllowedOriginPattern("*");
         configuration.setAllowCredentials(true);
+//        configuration.setAllowedOrigins(List.of("*")); // Adjust as needed
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

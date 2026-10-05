@@ -543,13 +543,8 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
         } else if ("Labour Type".equals(employee.getCanteenType())) {
             int perDayAmount = employee.getCanteenAmount();
 
-            // Case 2: If workingHoursIncludeLunch is null → always 2x per day
-            if (employee.getWorkingHoursIncludeLunch() == null) {
-                return workDays.size() * perDayAmount * 2;
-            }
-
-            // Case 3: Use threshold to decide heavy vs light day
-            long threshold = (long) hhDotMmToMinutes(employee.getWorkingHoursIncludeLunch());
+            // If day's net worked minutes > 13 hours (780 minutes), don't do canteenAmount * 2
+            long threshold = 13 * 60; // 780 minutes
 
             int heavyWorkingDays = 0;
             for (LocalDate date : workDays) {
@@ -557,9 +552,7 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
                     heavyWorkingDays++;
                 }
             }
-            System.out.println("============= heavyWorkingDays ========" + heavyWorkingDays);
             int lightDays = workDays.size() - heavyWorkingDays;
-            System.out.println("=========== lightDays =========" + lightDays);
             return (lightDays * perDayAmount * 2) + (heavyWorkingDays * perDayAmount);
         } else {
             return 0;
