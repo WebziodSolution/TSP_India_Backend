@@ -35,6 +35,9 @@ import org.springframework.stereotype.Service;
 
 import java.sql.Date;
 import java.time.format.DateTimeFormatter;
+import java.time.format.TextStyle;
+import com.timesheetspro_api.common.model.additionalDeductions.AdditionalDeductions;
+import com.timesheetspro_api.common.repository.company.AdditionalDeductionsRepository;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -71,6 +74,9 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
 
     @Autowired
     private DeductionsRepository deductionsRepository;
+
+    @Autowired
+    private AdditionalDeductionsRepository additionalDeductionsRepository;
 
     @Override
     public List<EmployeeSalaryStatementDto> getEmployeeSalaryStatements(
@@ -284,6 +290,34 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
         int deductions = this.calculateTotalAllowanceAndDeductions(companyEmployee.getEmployeeId(), "Deduction")
                 .stream().map(DeductionsDto::getAmount).reduce(0, Integer::sum);
 
+        String monthName = (salaryStatementRequestDto.getMonth() != null && salaryStatementRequestDto.getMonth() >= 1 && salaryStatementRequestDto.getMonth() <= 12)
+                ? Month.of(salaryStatementRequestDto.getMonth()).getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                : startLocalDate.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+
+        List<AdditionalDeductions> additionalDeductionsList = this.additionalDeductionsRepository
+                .findByUserIdAndMonth(companyEmployee.getEmployeeId(), monthName);
+        int additionalAllowance = 0;
+        int additionalDeductions = 0;
+        if (additionalDeductionsList != null) {
+            for (AdditionalDeductions ad : additionalDeductionsList) {
+                if (ad.getAmount() != null && !ad.getAmount().trim().isEmpty()) {
+                    try {
+                        int amount = (int) Math.round(Double.parseDouble(ad.getAmount().trim()));
+                        if ("Allowance".equalsIgnoreCase(ad.getType())) {
+                            additionalAllowance += amount;
+                        } else if ("Deduction".equalsIgnoreCase(ad.getType())) {
+                            additionalDeductions += amount;
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+
+        totalAllowance += additionalAllowance;
+        deductions += additionalDeductions;
+
         if (isHourly) {
             long totalMinutes = adjustedWorkMinutesTotal;
             long hrs = totalMinutes / 60;
@@ -341,7 +375,7 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
 //                System.out.println("=========== baseSalary ====="+baseSalary);
 //            }
         }
-        int otherDeductions = calculateCanteenDeductions(companyEmployee, dailyWorkedMinutes, actualWorkDays)
+        int otherDeductions = calculateCanteenDeductions(companyEmployee, dailyWorkedMinutes, actualWorkDays, startLocalDate, endLocalDate)
                 + penaltyAmount;
         int totalEarnings = baseSalary + otAmountFinal + totalAllowance;
         int ptAmount = Boolean.TRUE.equals(companyEmployee.getIsPt())
@@ -378,7 +412,7 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
         dto.setOtherDeductions(otherDeductions);
         dto.setTotalPenaltyAmount(penaltyAmount);
         dto.setTotalDeductions(totalDeductions);
-        dto.setNetSalary(totalEarnings - totalDeductions);
+        dto.setNetSalary(Math.max(0, totalEarnings - totalDeductions));
         dto.setEmployeeType(companyEmployee.getEmployeeType().getName());
         System.out.println("============= Debugging Employee Salary Statement for Employee: ================"
                 + companyEmployee.getUsername());
@@ -396,11 +430,11 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
         System.out.println("PF Amount: " + pfAmount);
         System.out.println("PT Amount: " + ptAmount);
         System.out.println("Penalty Amount: " + penaltyAmount);
-        System.out.println("Allowance: " + totalAllowance);
-        System.out.println("Deductions: " + deductions);
+        System.out.println("Allowance: " + totalAllowance + " (Additional: " + additionalAllowance + ")");
+        System.out.println("Deductions: " + deductions + " (Additional: " + additionalDeductions + ")");
         System.out.println("Other Deductions (Canteen + Penalty): " + otherDeductions);
         System.out.println("Total Deductions: " + totalDeductions);
-        System.out.println("Net Salary: " + (totalEarnings - totalDeductions));
+        System.out.println("Net Salary: " + Math.max(0, totalEarnings - totalDeductions));
 
         return dto;
     }
@@ -536,27 +570,56 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
 
     // Helper method to calculate canteen deductions
     private int calculateCanteenDeductions(CompanyEmployee employee, Map<LocalDate, Long> dailyWorkedMinutes,
-                                           Set<LocalDate> workDays) {
-        // Case 1: Office Type → flat amount
-        if ("Office Type".equals(employee.getCanteenType())) {
-            return employee.getCanteenAmount();
-        } else if ("Labour Type".equals(employee.getCanteenType())) {
-            int perDayAmount = employee.getCanteenAmount();
-
-            // If day's net worked minutes > 13 hours (780 minutes), don't do canteenAmount * 2
-            long threshold = 13 * 60; // 780 minutes
-
-            int heavyWorkingDays = 0;
-            for (LocalDate date : workDays) {
-                if (dailyWorkedMinutes.getOrDefault(date, 0L) > threshold) {
-                    heavyWorkingDays++;
-                }
-            }
-            int lightDays = workDays.size() - heavyWorkingDays;
-            return (lightDays * perDayAmount * 2) + (heavyWorkingDays * perDayAmount);
-        } else {
+                                           Set<LocalDate> workDays, LocalDate startLocalDate, LocalDate endLocalDate) {
+        if (employee == null) {
             return 0;
         }
+        String canteenType = employee.getCanteenType();
+        if (canteenType == null || "No Canteen".equalsIgnoreCase(canteenType)) {
+            return 0;
+        }
+
+        int perDayAmount = employee.getCanteenAmount() != null ? employee.getCanteenAmount() : 0;
+        if (perDayAmount <= 0) {
+            return 0;
+        }
+
+        boolean isHourly = employee.getEmployeeType() != null
+                && employee.getEmployeeType().getId() == 2
+                && employee.getHourlyRate() != null;
+
+        if (!isHourly && "Office Type".equals(canteenType)) {
+            return perDayAmount;
+        }
+
+        int totalCanteen = 0;
+        long threshold = 13 * 60; // 780 minutes
+
+        for (LocalDate date = startLocalDate; !date.isAfter(endLocalDate); date = date.plusDays(1)) {
+            boolean isWorked = workDays != null && workDays.contains(date);
+            boolean isWeeklyOff = false;
+            if (employee.getWeeklyOff() != null) {
+                DayOfWeek dayOfWeek = date.getDayOfWeek();
+                int weekOfMonth = ((date.getDayOfMonth() - 1) / 7) + 1;
+                isWeeklyOff = isWeeklyOffDay(dayOfWeek, weekOfMonth, employee.getWeeklyOff());
+            }
+
+            // Cut food charge on all days EXCEPT unworked weekly off
+            if (isWeeklyOff && !isWorked) {
+                continue;
+            }
+
+            if ("Labour Type".equals(canteenType)) {
+                if (isWorked && dailyWorkedMinutes != null && dailyWorkedMinutes.getOrDefault(date, 0L) > threshold) {
+                    totalCanteen += perDayAmount;
+                } else {
+                    totalCanteen += perDayAmount * 2;
+                }
+            } else if ("Office Type".equals(canteenType)) {
+                totalCanteen += perDayAmount;
+            }
+        }
+        return totalCanteen;
     }
 
     // ===== Helper: compute penalty given a rule, day salary, shift hours & diff minutes

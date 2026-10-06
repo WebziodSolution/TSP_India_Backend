@@ -23,8 +23,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
+import com.timesheetspro_api.additionalDeductions.service.AdditionalDeductionsService;
+import com.timesheetspro_api.common.dto.additionalDeductions.AdditionalDeductionsDto;
+import java.time.Month;
 import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.format.TextStyle;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -51,6 +57,9 @@ public class SalaryStatementHistoryServiceImpl implements SalaryStatementHistory
 
     @Autowired
     private DeductionsRepository deductionsRepository;
+
+    @Autowired
+    private AdditionalDeductionsService additionalDeductionsService;
 
     @Override
     public List<Map<String, Object>> filterSalaryStatementHistory(List<Integer> employeeId, List<Integer> departmentId, List<String> month, Integer companyId) {
@@ -165,7 +174,7 @@ public class SalaryStatementHistoryServiceImpl implements SalaryStatementHistory
                     entity.setTotalPenaltyAmount(dto.getTotalPenaltyAmount() + entity.getTotalPenaltyAmount());
                     entity.setNote(dto.getNote());
 
-                    this.salaryStatementHistoryRepository.save(entity);
+                    entity = this.salaryStatementHistoryRepository.save(entity);
                 } else {
                     entity = new SalaryStatementHistory();
                     CompanyDetails companyDetails = this.companyDetailsRepository.findById(dto.getCompanyId()).orElseThrow(() -> new RuntimeException("Company not found"));
@@ -179,7 +188,28 @@ public class SalaryStatementHistoryServiceImpl implements SalaryStatementHistory
                     Date currentDate = new Date();
                     entity.setGeneratedDate(currentDate);
                     BeanUtils.copyProperties(dto, entity, "id", "companyId", "month");
-                    this.salaryStatementHistoryRepository.save(entity);
+                    entity = this.salaryStatementHistoryRepository.save(entity);
+                }
+
+                String month = null;
+                if (dto.getMonthNumber() != null && dto.getMonthNumber() >= 1 && dto.getMonthNumber() <= 12) {
+                    month = Month.of(dto.getMonthNumber()).getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+                } else if (dto.getMonthYear() != null && dto.getMonthYear().contains("-")) {
+                    month = dto.getMonthYear().split("-")[0].trim();
+                } else if (startDate != null) {
+                    LocalDate localStart = startDate.toInstant().atZone(ZoneId.of("Asia/Calcutta")).toLocalDate();
+                    month = localStart.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+                }
+
+                if (month != null) {
+                    List<AdditionalDeductionsDto> additionalDeductionsList = this.additionalDeductionsService
+                            .findByMonthAndUser(dto.getEmployeeId(), month);
+                    if (additionalDeductionsList != null && !additionalDeductionsList.isEmpty()) {
+                        for (AdditionalDeductionsDto addDto : additionalDeductionsList) {
+                            addDto.setSalaryId(entity.getId());
+                        }
+                        this.additionalDeductionsService.save(additionalDeductionsList);
+                    }
                 }
 
                 SalaryStatementMasterDto salaryStatementMasterDto = this.salaryStatementMasterService

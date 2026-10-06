@@ -41,6 +41,8 @@ import java.text.SimpleDateFormat;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.TextStyle;
+import com.timesheetspro_api.common.model.additionalDeductions.AdditionalDeductions;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -86,6 +88,9 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Autowired
     private DeductionsRepository deductionsRepository;
+
+    @Autowired
+    private AdditionalDeductionsRepository additionalDeductionsRepository;
 
     private LocalDate parseDateString(String dateStr) {
         if (dateStr == null)
@@ -400,20 +405,18 @@ public class UserInOutServiceImpl implements UserInOutService {
                                 && companyEmployee.getHourlyRate() != null;
                         double todaySalary = 0.0;
                         double foodCharge = 0.0;
+
+                        if (!isWeeklyOff) {
+                            foodCharge = calculateFoodCharge(companyEmployee, 0);
+                        }
+
                         if ((isWeeklyOff || isHoliday) && !isHourlyEmp) {
                             double monthlySalary = companyEmployee.getBasicSalary() != null
                                     ? companyEmployee.getBasicSalary()
                                     : 0.0;
                             todaySalary = Math.round((monthlySalary / 30.0) * 100.0) / 100.0;
-                            String canteenType = companyEmployee.getCanteenType();
-                            if (canteenType != null && !"No Canteen".equalsIgnoreCase(canteenType)) {
-                                double monthlyCanteen = companyEmployee.getCanteenAmount() != null
-                                        ? companyEmployee.getCanteenAmount()
-                                        : 0.0;
-                                foodCharge = Math.round((monthlyCanteen / 30.0) * 100.0) / 100.0;
-                            }
                         }
-                        double netSalary = Math.round((todaySalary - foodCharge) * 100.0) / 100.0;
+                        double netSalary = Math.max(0.0, Math.round((todaySalary - foodCharge) * 100.0) / 100.0);
                         dataItem.put("todaySalary", todaySalary);
                         dataItem.put("foodCharge", foodCharge);
                         dataItem.put("netSalary", netSalary);
@@ -448,7 +451,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
                         double daySalary = calculateTodaySalary(companyEmployee, dayNetMinutes);
                         double dayFoodCharge = calculateFoodCharge(companyEmployee, dayNetMinutes);
-                        double dayNetSalary = Math.round((daySalary - dayFoodCharge) * 100.0) / 100.0;
+                        double dayNetSalary = Math.max(0.0, Math.round((daySalary - dayFoodCharge) * 100.0) / 100.0);
                         int dayOtAmount = calculateDailyOvertimeAmount(companyEmployee, dayNetMinutes);
 
                         // 3. Output the entries
@@ -533,8 +536,12 @@ public class UserInOutServiceImpl implements UserInOutService {
                                     }
                                     dataItem.put("status", status);
                                     dataItem.put("todaySalary", 0);
-                                    dataItem.put("foodCharge", 0);
-                                    dataItem.put("netSalary", 0);
+                                    double foodCharge = 0.0;
+                                    if (!isWeeklyOff) {
+                                        foodCharge = calculateFoodCharge(companyEmployee, 0);
+                                    }
+                                    dataItem.put("foodCharge", foodCharge);
+                                    dataItem.put("netSalary", 0.0);
                                     dataItem.put("otAmount", 0);
                                     isFirst = false;
                                 } else {
@@ -587,10 +594,11 @@ public class UserInOutServiceImpl implements UserInOutService {
                 userGroup.put("totalOvertime", formatMinutesToHHmm(totalOvertimeMinutes));
 
                 int totalOtAmount = calculateOvertimeAmount(companyEmployee, dailyWorkedMinutes, actualWorkDays);
+                String monthName = startLocal != null ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) : null;
                 List<DeductionsDto> userAllowances = calculateTotalAllowanceAndDeductions(user.getEmployeeId(),
-                        "Allowance");
+                        "Allowance", monthName);
                 List<DeductionsDto> userDeductions = calculateTotalAllowanceAndDeductions(user.getEmployeeId(),
-                        "Deduction");
+                        "Deduction", monthName);
 
                 userGroup.put("otAmount", totalOtAmount);
                 userGroup.put("totalOtAmount", totalOtAmount);
@@ -619,18 +627,23 @@ public class UserInOutServiceImpl implements UserInOutService {
             ZoneId zone = ZoneId.of(timeZone);
             Instant startInstant, endInstant;
 
+            LocalDate startLocal = null;
+            LocalDate endLocal = null;
+
             if (startDate == null || endDate == null) {
                 // Default: current month in UTC
                 ZoneId utc = ZoneId.of("UTC");
                 LocalDate now = LocalDate.now(utc);
                 LocalDate firstOfMonth = now.withDayOfMonth(1);
+                startLocal = firstOfMonth;
+                endLocal = now;
                 ZonedDateTime startZdt = firstOfMonth.atStartOfDay(utc);
                 ZonedDateTime endZdt = now.atTime(LocalTime.MAX).atZone(utc);
                 startInstant = startZdt.toInstant();
                 endInstant = endZdt.toInstant();
             } else {
-                LocalDate startLocal = parseDateString(startDate);
-                LocalDate endLocal = parseDateString(endDate);
+                startLocal = parseDateString(startDate);
+                endLocal = parseDateString(endDate);
 
                 ZonedDateTime startZdt = startLocal.atStartOfDay(zone);
                 ZonedDateTime endZdt = endLocal.atTime(LocalTime.MAX).atZone(zone);
@@ -730,6 +743,7 @@ public class UserInOutServiceImpl implements UserInOutService {
             Map<Integer, List<DeductionsDto>> userDeductionsMap = new HashMap<>();
 
             for (Map.Entry<LocalDate, Map<Integer, List<UserInOut>>> dateEntry : groupedByDateAndUser.entrySet()) {
+                LocalDate date = dateEntry.getKey();
                 Map<Integer, List<UserInOut>> userMap = dateEntry.getValue();
 
                 for (Map.Entry<Integer, List<UserInOut>> userEntry : userMap.entrySet()) {
@@ -828,11 +842,18 @@ public class UserInOutServiceImpl implements UserInOutService {
                         dto.setWorkHours(formatMinutesToHHmm(workMinutes));
                         dto.setOvertime(formatMinutesToHHmm(overtimeMinutes));
                         dto.setTotalHours(formatMinutesToHHmm(dayTotalGrossMinutes));
-                        dto.setStatus("P");
+                        CompanyEmployee currentEmp = emp != null ? emp : companyEmployee;
+                        boolean isWeeklyOff = false;
+                        if (currentEmp != null && currentEmp.getWeeklyOff() != null) {
+                            DayOfWeek dayOfWeek = date.getDayOfWeek();
+                            int weekOfMonth = ((date.getDayOfMonth() - 1) / 7) + 1;
+                            isWeeklyOff = isWeeklyOffDay(dayOfWeek, weekOfMonth, currentEmp.getWeeklyOff());
+                        }
+                        dto.setStatus(isWeeklyOff ? "PW" : "P");
 
                         double todaySalary = calculateTodaySalary(emp != null ? emp : companyEmployee, workMinutes);
                         double foodCharge = calculateFoodCharge(emp != null ? emp : companyEmployee, workMinutes);
-                        double netSalary = Math.round((todaySalary - foodCharge) * 100.0) / 100.0;
+                        double netSalary = Math.max(0.0, Math.round((todaySalary - foodCharge) * 100.0) / 100.0);
                         dto.setTodaySalary(todaySalary);
                         dto.setFoodCharge(foodCharge);
                         dto.setNetSalary(netSalary);
@@ -845,19 +866,29 @@ public class UserInOutServiceImpl implements UserInOutService {
                         dto.setWorkHours("00:00");
                         dto.setOvertime("00:00");
                         dto.setTotalHours("00:00");
-                        dto.setStatus("A");
+
+                        CompanyEmployee currentEmp = emp != null ? emp : companyEmployee;
+                        boolean isWeeklyOff = false;
+                        if (currentEmp != null && currentEmp.getWeeklyOff() != null) {
+                            DayOfWeek dayOfWeek = date.getDayOfWeek();
+                            int weekOfMonth = ((date.getDayOfMonth() - 1) / 7) + 1;
+                            isWeeklyOff = isWeeklyOffDay(dayOfWeek, weekOfMonth, currentEmp.getWeeklyOff());
+                        }
+
+                        dto.setStatus(isWeeklyOff ? "W" : "A");
                         dto.setTodaySalary(0);
-                        dto.setFoodCharge(0);
-                        dto.setNetSalary(0);
+                        double foodCharge = isWeeklyOff ? 0.0 : calculateFoodCharge(currentEmp, 0);
+                        dto.setFoodCharge(foodCharge);
+                        dto.setNetSalary(0.0);
                         dto.setOtAmount(0);
                     }
                     dto.setDepartment(firstRecord.getUser().getDepartment().getDepartmentName());
-                    dto.setStatus(firstTimeIn != null ? "P" : "A");
 
+                    String monthName = startLocal != null ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) : null;
                     List<DeductionsDto> userAllowances = userAllowancesMap.computeIfAbsent(empId,
-                            id -> calculateTotalAllowanceAndDeductions(id, "Allowance"));
+                            id -> calculateTotalAllowanceAndDeductions(id, "Allowance", monthName));
                     List<DeductionsDto> userDeductions = userDeductionsMap.computeIfAbsent(empId,
-                            id -> calculateTotalAllowanceAndDeductions(id, "Deduction"));
+                            id -> calculateTotalAllowanceAndDeductions(id, "Deduction", monthName));
                     dto.setAllowances(userAllowances);
                     dto.setDeductions(userDeductions);
 
@@ -1068,6 +1099,10 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     // Helper method to calculate allowance/deductions for a user
     private List<DeductionsDto> calculateTotalAllowanceAndDeductions(Integer userId, String type) {
+        return calculateTotalAllowanceAndDeductions(userId, type, null);
+    }
+
+    private List<DeductionsDto> calculateTotalAllowanceAndDeductions(Integer userId, String type, String month) {
         List<DeductionsDto> deductionsDtoList = new ArrayList<>();
         if (userId == null) {
             return deductionsDtoList;
@@ -1085,6 +1120,34 @@ public class UserInOutServiceImpl implements UserInOutService {
                 deductionsDtoList.add(deductionsDto);
             }
         }
+
+        if (month != null && !month.trim().isEmpty()) {
+            List<AdditionalDeductions> additionalDeductionsList = this.additionalDeductionsRepository
+                    .findAllByUserIdAndMonth(userId, month);
+            if (additionalDeductionsList != null) {
+                for (AdditionalDeductions ad : additionalDeductionsList) {
+                    if (ad.getType() != null && ad.getType().equalsIgnoreCase(type)) {
+                        DeductionsDto deductionsDto = new DeductionsDto();
+                        deductionsDto.setId(ad.getId());
+                        deductionsDto.setEmployeeId(userId);
+                        deductionsDto.setLabel(ad.getTitle());
+                        deductionsDto.setName(ad.getTitle());
+                        int amount = 0;
+                        if (ad.getAmount() != null && !ad.getAmount().trim().isEmpty()) {
+                            try {
+                                amount = (int) Math.round(Double.parseDouble(ad.getAmount().trim()));
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        }
+                        deductionsDto.setAmount(amount);
+                        deductionsDto.setType(ad.getType());
+                        deductionsDtoList.add(deductionsDto);
+                    }
+                }
+            }
+        }
+
         return deductionsDtoList;
     }
 
