@@ -408,6 +408,8 @@ public class UserInOutServiceImpl implements UserInOutService {
 
                         if (!isWeeklyOff) {
                             foodCharge = calculateFoodCharge(companyEmployee, 0);
+                        } else if (companyEmployee.getCanteenType().equals("Office Type")) {
+                            foodCharge = calculateFoodCharge(companyEmployee, 0);
                         }
 
                         if ((isWeeklyOff || isHoliday) && !isHourlyEmp) {
@@ -539,6 +541,8 @@ public class UserInOutServiceImpl implements UserInOutService {
                                     double foodCharge = 0.0;
                                     if (!isWeeklyOff) {
                                         foodCharge = calculateFoodCharge(companyEmployee, 0);
+                                    } else if (companyEmployee.getCanteenType().equals("Office Type")) {
+                                        foodCharge = calculateFoodCharge(companyEmployee, 0);
                                     }
                                     dataItem.put("foodCharge", foodCharge);
                                     dataItem.put("netSalary", 0.0);
@@ -594,11 +598,16 @@ public class UserInOutServiceImpl implements UserInOutService {
                 userGroup.put("totalOvertime", formatMinutesToHHmm(totalOvertimeMinutes));
 
                 int totalOtAmount = calculateOvertimeAmount(companyEmployee, dailyWorkedMinutes, actualWorkDays);
-                String monthName = startLocal != null ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) : null;
+                String monthName = startLocal != null
+                        ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                        : null;
                 List<DeductionsDto> userAllowances = calculateTotalAllowanceAndDeductions(user.getEmployeeId(),
                         "Allowance", monthName);
                 List<DeductionsDto> userDeductions = calculateTotalAllowanceAndDeductions(user.getEmployeeId(),
                         "Deduction", monthName);
+
+                addPfAndPtDeductions(companyEmployee, userDeductions, userAllowances, dailyWorkedMinutes,
+                        actualWorkDays, startLocal, endLocal, holidayDates);
 
                 userGroup.put("otAmount", totalOtAmount);
                 userGroup.put("totalOtAmount", totalOtAmount);
@@ -742,6 +751,60 @@ public class UserInOutServiceImpl implements UserInOutService {
             Map<Integer, List<DeductionsDto>> userAllowancesMap = new HashMap<>();
             Map<Integer, List<DeductionsDto>> userDeductionsMap = new HashMap<>();
 
+            // Pre-calculate daily worked minutes and actual work days per employee
+            Map<Integer, Map<LocalDate, Long>> empDailyWorkedMinutes = new HashMap<>();
+            Map<Integer, Set<LocalDate>> empActualWorkDays = new HashMap<>();
+
+            for (Map.Entry<LocalDate, Map<Integer, List<UserInOut>>> dateEntry : groupedByDateAndUser.entrySet()) {
+                LocalDate date = dateEntry.getKey();
+                for (Map.Entry<Integer, List<UserInOut>> userEntry : dateEntry.getValue().entrySet()) {
+                    int empId = userEntry.getKey();
+                    List<UserInOut> dayRecords = userEntry.getValue();
+                    EmployeeData empData = employeeDataMap.get(empId);
+                    int breakMinutes = empData != null ? empData.breakMinutes : 0;
+
+                    int dayTotalGrossMinutes = 0;
+                    for (UserInOut record : dayRecords) {
+                        if (record.getTimeIn() != null && record.getTimeOut() != null) {
+                            long diffMs = record.getTimeOut().getTime() - record.getTimeIn().getTime();
+                            dayTotalGrossMinutes += (int) (diffMs / (60 * 1000));
+                        }
+                    }
+                    if (dayTotalGrossMinutes > 0) {
+                        int workMinutes = Math.max(0, dayTotalGrossMinutes - breakMinutes);
+                        empDailyWorkedMinutes.computeIfAbsent(empId, k -> new HashMap<>()).put(date,
+                                (long) workMinutes);
+                        empActualWorkDays.computeIfAbsent(empId, k -> new HashSet<>()).add(date);
+                    }
+                }
+            }
+
+            String monthName = startLocal != null ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                    : null;
+            for (Integer empId : distinctUserIds) {
+                CompanyEmployee emp = employeeMap.get(empId);
+                if (emp == null) {
+                    emp = this.companyEmployeeRepository.findById(empId).orElse(null);
+                }
+                List<DeductionsDto> userAllowances = calculateTotalAllowanceAndDeductions(empId, "Allowance",
+                        monthName);
+                List<DeductionsDto> userDeductions = calculateTotalAllowanceAndDeductions(empId, "Deduction",
+                        monthName);
+
+                if (emp != null) {
+                    List<String> holidayDates = getHolidayDates(emp, companyId);
+                    Map<LocalDate, Long> dailyWorked = empDailyWorkedMinutes.getOrDefault(empId,
+                            Collections.emptyMap());
+                    Set<LocalDate> actualDays = empActualWorkDays.getOrDefault(empId, Collections.emptySet());
+
+                    addPfAndPtDeductions(emp, userDeductions, userAllowances, dailyWorked, actualDays, startLocal,
+                            endLocal, holidayDates);
+                }
+
+                userAllowancesMap.put(empId, userAllowances);
+                userDeductionsMap.put(empId, userDeductions);
+            }
+
             for (Map.Entry<LocalDate, Map<Integer, List<UserInOut>>> dateEntry : groupedByDateAndUser.entrySet()) {
                 LocalDate date = dateEntry.getKey();
                 Map<Integer, List<UserInOut>> userMap = dateEntry.getValue();
@@ -884,11 +947,20 @@ public class UserInOutServiceImpl implements UserInOutService {
                     }
                     dto.setDepartment(firstRecord.getUser().getDepartment().getDepartmentName());
 
-                    String monthName = startLocal != null ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH) : null;
-                    List<DeductionsDto> userAllowances = userAllowancesMap.computeIfAbsent(empId,
-                            id -> calculateTotalAllowanceAndDeductions(id, "Allowance", monthName));
-                    List<DeductionsDto> userDeductions = userDeductionsMap.computeIfAbsent(empId,
-                            id -> calculateTotalAllowanceAndDeductions(id, "Deduction", monthName));
+                    List<DeductionsDto> userAllowances = userAllowancesMap.get(empId);
+                    if (userAllowances == null) {
+                        String monthNameA = startLocal != null
+                                ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                                : null;
+                        userAllowances = calculateTotalAllowanceAndDeductions(empId, "Allowance", monthNameA);
+                    }
+                    List<DeductionsDto> userDeductions = userDeductionsMap.get(empId);
+                    if (userDeductions == null) {
+                        String monthNameD = startLocal != null
+                                ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
+                                : null;
+                        userDeductions = calculateTotalAllowanceAndDeductions(empId, "Deduction", monthNameD);
+                    }
                     dto.setAllowances(userAllowances);
                     dto.setDeductions(userDeductions);
 
@@ -966,7 +1038,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                     return (double) (canteenAmount * 2);
                 }
             } else if ("Office Type".equals(canteenType)) {
-                return (double) canteenAmount;
+                return (double) Math.round((canteenAmount / 30.0) * 100.0) / 100.0;
             } else {
                 return 0.0;
             }
@@ -1149,6 +1221,230 @@ public class UserInOutServiceImpl implements UserInOutService {
         }
 
         return deductionsDtoList;
+    }
+
+    // Helper method to add PF and PT deductions if applicable
+    private void addPfAndPtDeductions(CompanyEmployee companyEmployee,
+            List<DeductionsDto> userDeductions,
+            List<DeductionsDto> userAllowances,
+            Map<LocalDate, Long> dailyWorkedMinutes,
+            Set<LocalDate> actualWorkDays,
+            LocalDate startLocal,
+            LocalDate endLocal,
+            List<String> holidayDates) {
+        if (companyEmployee == null || userDeductions == null) {
+            return;
+        }
+
+        // 1. PT Amount
+        int ptAmount = Boolean.TRUE.equals(companyEmployee.getIsPt())
+                ? (companyEmployee.getPtAmount() != null ? companyEmployee.getPtAmount() : 0)
+                : 0;
+
+        // 2. Base Salary
+        int baseSalary;
+        boolean isHourly = companyEmployee.getEmployeeType() != null
+                && companyEmployee.getEmployeeType().getId() == 2
+                && companyEmployee.getHourlyRate() != null;
+
+        if (isHourly) {
+            long totalMinutes = (dailyWorkedMinutes != null)
+                    ? dailyWorkedMinutes.values().stream().mapToLong(Long::longValue).sum()
+                    : 0L;
+            long hrs = totalMinutes / 60;
+            long mins = totalMinutes % 60;
+            double hourlyRate = companyEmployee.getHourlyRate();
+            double payForWorked = (hrs * hourlyRate) + (mins * hourlyRate / 60.0);
+            baseSalary = (int) Math.round(payForWorked);
+        } else {
+            int monthlySalary = companyEmployee.getBasicSalary() != null ? companyEmployee.getBasicSalary() : 0;
+            double dailyRate = monthlySalary / 30.0;
+            Set<LocalDate> holidayLocalDates = new HashSet<>();
+            if (holidayDates != null) {
+                for (String d : holidayDates) {
+                    try {
+                        holidayLocalDates.add(LocalDate.parse(d, DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+            Set<LocalDate> paidOffDays = calculatePaidDays(startLocal, endLocal, companyEmployee.getWeeklyOff(),
+                    holidayLocalDates);
+            int actualWorkDayCount = actualWorkDays != null ? actualWorkDays.size() : 0;
+            int paidDayCount = Math.min(actualWorkDayCount + paidOffDays.size(), 30);
+            baseSalary = (int) Math.round(dailyRate * paidDayCount);
+        }
+
+        // 3. Overtime
+        int totalOtAmount = calculateOvertimeAmount(companyEmployee, dailyWorkedMinutes, actualWorkDays);
+
+        // 4. Total Allowances
+        int totalAllowance = (userAllowances != null)
+                ? userAllowances.stream().map(d -> d.getAmount() != null ? d.getAmount() : 0).reduce(0, Integer::sum)
+                : 0;
+
+        // 5. Total Earnings
+        int totalEarnings = baseSalary + totalOtAmount + totalAllowance;
+
+        // 6. Canteen / Other Deductions
+        int otherDeductions = calculateCanteenDeductions(companyEmployee, dailyWorkedMinutes, actualWorkDays,
+                startLocal, endLocal);
+
+        // 7. Regular deductions (from DB)
+        int totalUserDeductions = userDeductions.stream()
+                .map(d -> d.getAmount() != null ? d.getAmount() : 0)
+                .reduce(0, Integer::sum);
+
+        int totalDeductionsBeforePf = otherDeductions + totalUserDeductions + ptAmount;
+
+        // 8. PF Amount
+        int pfBasis = Math.max(0, totalEarnings - totalDeductionsBeforePf);
+        int pfAmount = Boolean.TRUE.equals(companyEmployee.getIsPf()) ? calculatePfAmount(companyEmployee, pfBasis) : 0;
+
+        // 9. Add PT to userDeductions if applicable
+        if (Boolean.TRUE.equals(companyEmployee.getIsPt()) && ptAmount > 0) {
+            boolean hasPt = userDeductions.stream()
+                    .anyMatch(d -> "PT".equalsIgnoreCase(d.getLabel()) || "PT".equalsIgnoreCase(d.getName()));
+            if (!hasPt) {
+                DeductionsDto ptDto = new DeductionsDto();
+                ptDto.setEmployeeId(companyEmployee.getEmployeeId());
+                ptDto.setType("Deduction");
+                ptDto.setLabel("PT");
+                ptDto.setName("PT");
+                ptDto.setAmount(ptAmount);
+                userDeductions.add(ptDto);
+            }
+        }
+
+        // 10. Add PF to userDeductions if applicable
+        if (Boolean.TRUE.equals(companyEmployee.getIsPf()) && pfAmount > 0) {
+            boolean hasPf = userDeductions.stream()
+                    .anyMatch(d -> "PF".equalsIgnoreCase(d.getLabel()) || "PF".equalsIgnoreCase(d.getName()));
+            if (!hasPf) {
+                DeductionsDto pfDto = new DeductionsDto();
+                pfDto.setEmployeeId(companyEmployee.getEmployeeId());
+                pfDto.setType("Deduction");
+                pfDto.setLabel("PF");
+                pfDto.setName("PF");
+                pfDto.setAmount(pfAmount);
+                userDeductions.add(pfDto);
+            }
+        }
+    }
+
+    private Set<LocalDate> calculatePaidDays(LocalDate startLocalDate, LocalDate endLocalDate, WeeklyOff config,
+            Set<LocalDate> holidayDates) {
+        Set<LocalDate> paidDays = new HashSet<>();
+        if (startLocalDate == null || endLocalDate == null) {
+            return paidDays;
+        }
+        for (LocalDate date = startLocalDate; !date.isAfter(endLocalDate); date = date.plusDays(1)) {
+            boolean isOffDay = false;
+            if (holidayDates != null && holidayDates.contains(date)) {
+                isOffDay = true;
+            }
+            if (!isOffDay && config != null) {
+                DayOfWeek dayOfWeek = date.getDayOfWeek();
+                int weekOfMonth = ((date.getDayOfMonth() - 1) / 7) + 1;
+                isOffDay = isWeeklyOffDay(dayOfWeek, weekOfMonth, config);
+            }
+            if (isOffDay) {
+                paidDays.add(date);
+            }
+        }
+        return paidDays;
+    }
+
+    private int calculateCanteenDeductions(CompanyEmployee employee, Map<LocalDate, Long> dailyWorkedMinutes,
+            Set<LocalDate> workDays, LocalDate startLocalDate, LocalDate endLocalDate) {
+        if (employee == null || startLocalDate == null || endLocalDate == null) {
+            return 0;
+        }
+        String canteenType = employee.getCanteenType();
+        if (canteenType == null || "No Canteen".equalsIgnoreCase(canteenType)) {
+            return 0;
+        }
+
+        int perDayAmount = employee.getCanteenAmount() != null ? employee.getCanteenAmount() : 0;
+        if (perDayAmount <= 0) {
+            return 0;
+        }
+
+        boolean isHourly = employee.getEmployeeType() != null
+                && employee.getEmployeeType().getId() == 2
+                && employee.getHourlyRate() != null;
+
+        if (!isHourly && "Office Type".equals(canteenType)) {
+            return perDayAmount;
+        }
+
+        int totalCanteen = 0;
+        long threshold = 13 * 60; // 780 minutes
+
+        for (LocalDate date = startLocalDate; !date.isAfter(endLocalDate); date = date.plusDays(1)) {
+            boolean isWorked = workDays != null && workDays.contains(date);
+            boolean isWeeklyOff = false;
+            if (employee.getWeeklyOff() != null) {
+                DayOfWeek dayOfWeek = date.getDayOfWeek();
+                int weekOfMonth = ((date.getDayOfMonth() - 1) / 7) + 1;
+                isWeeklyOff = isWeeklyOffDay(dayOfWeek, weekOfMonth, employee.getWeeklyOff());
+            }
+
+            // Cut food charge on all days EXCEPT unworked weekly off
+            if (isWeeklyOff && !isWorked) {
+                continue;
+            }
+
+            if ("Labour Type".equals(canteenType)) {
+                if (isWorked && dailyWorkedMinutes != null && dailyWorkedMinutes.getOrDefault(date, 0L) > threshold) {
+                    totalCanteen += perDayAmount;
+                } else {
+                    totalCanteen += perDayAmount * 2;
+                }
+            } else if ("Office Type".equals(canteenType)) {
+                totalCanteen += perDayAmount;
+            }
+        }
+        return totalCanteen;
+    }
+
+    private int calculatePfAmount(CompanyEmployee employee, Integer totalEarnings) {
+        if (totalEarnings == null || totalEarnings <= 0) {
+            return 0;
+        }
+        if (totalEarnings >= 15000) {
+            return 1800;
+        } else {
+            int pct = (employee != null && employee.getPfPercentage() != null && employee.getPfPercentage() > 0)
+                    ? employee.getPfPercentage()
+                    : 12;
+            return (totalEarnings * pct) / 100;
+        }
+    }
+
+    private List<String> getHolidayDates(CompanyEmployee employee, Integer companyId) {
+        List<String> holidayDates = new ArrayList<>();
+        Integer targetCompanyId = companyId;
+        if (employee != null && employee.getCompanyDetails() != null) {
+            targetCompanyId = employee.getCompanyDetails().getId();
+        }
+        if (targetCompanyId != null) {
+            List<HolidayTemplates> holidayTemplates = this.holidayTemplatesRepository.findByCompanyId(targetCompanyId);
+            if (holidayTemplates != null && !holidayTemplates.isEmpty()) {
+                for (HolidayTemplates template : holidayTemplates) {
+                    List<HolidayTemplateDetailsDto> dtoList = this.holidayTemplateDetailsService
+                            .getAllHolidayTemplateDetailsByTemplateId(template.getId());
+                    if (dtoList != null && !dtoList.isEmpty()) {
+                        for (HolidayTemplateDetailsDto dto : dtoList) {
+                            if (dto.getDate() != null && dto.getDate().length() >= 10) {
+                                holidayDates.add(dto.getDate().substring(0, 10));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return holidayDates;
     }
 
     private int hhDotMmToMinutes(Object value) {
