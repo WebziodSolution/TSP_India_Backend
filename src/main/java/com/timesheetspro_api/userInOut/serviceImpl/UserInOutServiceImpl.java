@@ -6,6 +6,7 @@ import com.timesheetspro_api.common.dto.companyShiftDto.CompanyShiftDto;
 import com.timesheetspro_api.common.dto.holidayTemplateDetails.HolidayTemplateDetailsDto;
 import com.timesheetspro_api.common.model.CompanyEmployee.CompanyEmployee;
 import com.timesheetspro_api.common.model.UserInOut.UserInOut;
+import com.timesheetspro_api.common.model.attendancePenaltyRules.AttendancePenaltyRules;
 import com.timesheetspro_api.common.model.companyDetails.CompanyDetails;
 import com.timesheetspro_api.common.model.companyShift.CompanyShift;
 import com.timesheetspro_api.common.model.holidayTemplateDetails.HolidayTemplateDetails;
@@ -91,6 +92,9 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     @Autowired
     private AdditionalDeductionsRepository additionalDeductionsRepository;
+
+    @Autowired
+    private AttendancePenaltyRulesRepository attendancePenaltyRulesRepository;
 
     private LocalDate parseDateString(String dateStr) {
         if (dateStr == null)
@@ -406,7 +410,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                         double todaySalary = 0.0;
                         double foodCharge = 0.0;
 
-                        if (!isWeeklyOff) {
+                        if (!isWeeklyOff && !isHoliday) {
                             foodCharge = calculateFoodCharge(companyEmployee, 0);
                         } else if (companyEmployee.getCanteenType().equals("Office Type")) {
                             foodCharge = calculateFoodCharge(companyEmployee, 0);
@@ -539,7 +543,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                                     dataItem.put("status", status);
                                     dataItem.put("todaySalary", 0);
                                     double foodCharge = 0.0;
-                                    if (!isWeeklyOff) {
+                                    if (!isWeeklyOff && !isHoliday) {
                                         foodCharge = calculateFoodCharge(companyEmployee, 0);
                                     } else if (companyEmployee.getCanteenType().equals("Office Type")) {
                                         foodCharge = calculateFoodCharge(companyEmployee, 0);
@@ -606,11 +610,16 @@ public class UserInOutServiceImpl implements UserInOutService {
                 List<DeductionsDto> userDeductions = calculateTotalAllowanceAndDeductions(user.getEmployeeId(),
                         "Deduction", monthName);
 
+                Map<String, Integer> penaltyMap = calculatePenaltyMap(companyEmployee, entries, zone);
+                int totalPenaltyAmount = penaltyMap.values().stream().mapToInt(Integer::intValue).sum();
+
                 addPfAndPtDeductions(companyEmployee, userDeductions, userAllowances, dailyWorkedMinutes,
-                        actualWorkDays, startLocal, endLocal, holidayDates);
+                        actualWorkDays, startLocal, endLocal, holidayDates, penaltyMap);
 
                 userGroup.put("otAmount", totalOtAmount);
                 userGroup.put("totalOtAmount", totalOtAmount);
+                userGroup.put("penaltyAmount", totalPenaltyAmount);
+                userGroup.put("totalPenaltyAmount", totalPenaltyAmount);
                 userGroup.put("allowances", userAllowances);
                 userGroup.put("deductions", userDeductions);
 
@@ -724,7 +733,10 @@ public class UserInOutServiceImpl implements UserInOutService {
                     int regMinutes = 0;
                     int breakMinutes = emp.getLunchBreak() != null ? emp.getLunchBreak() : 0;
                     if (emp.getCompanyShift() != null) {
-                        CompanyShift shift = emp.getCompanyShift();
+                        CompanyShift shift = this.companyShiftRepository
+                                .findById(emp.getCompanyShift().getId())
+                                .orElse(emp.getCompanyShift());
+                        emp.setCompanyShift(shift);
                         // totalHours is stored as Float (e.g., 8.5 for 8h30m)
                         Float regHours = shift.getTotalHours();
                         regMinutes = regHours != null ? Math.round(regHours * 60) : 0;
@@ -779,6 +791,10 @@ public class UserInOutServiceImpl implements UserInOutService {
                 }
             }
 
+            Map<Integer, List<UserInOut>> userEntriesMap = userInOutList.stream()
+                    .filter(uio -> uio.getUser() != null)
+                    .collect(Collectors.groupingBy(uio -> uio.getUser().getEmployeeId()));
+
             String monthName = startLocal != null ? startLocal.getMonth().getDisplayName(TextStyle.FULL, Locale.ENGLISH)
                     : null;
             for (Integer empId : distinctUserIds) {
@@ -796,9 +812,11 @@ public class UserInOutServiceImpl implements UserInOutService {
                     Map<LocalDate, Long> dailyWorked = empDailyWorkedMinutes.getOrDefault(empId,
                             Collections.emptyMap());
                     Set<LocalDate> actualDays = empActualWorkDays.getOrDefault(empId, Collections.emptySet());
+                    List<UserInOut> empEntries = userEntriesMap.getOrDefault(empId, Collections.emptyList());
+                    Map<String, Integer> penaltyMap = calculatePenaltyMap(emp, empEntries, zone);
 
                     addPfAndPtDeductions(emp, userDeductions, userAllowances, dailyWorked, actualDays, startLocal,
-                            endLocal, holidayDates);
+                            endLocal, holidayDates, penaltyMap);
                 }
 
                 userAllowancesMap.put(empId, userAllowances);
@@ -1232,6 +1250,36 @@ public class UserInOutServiceImpl implements UserInOutService {
             LocalDate startLocal,
             LocalDate endLocal,
             List<String> holidayDates) {
+        addPfAndPtDeductions(companyEmployee, userDeductions, userAllowances, dailyWorkedMinutes,
+                actualWorkDays, startLocal, endLocal, holidayDates, Collections.emptyMap());
+    }
+
+    private void addPfAndPtDeductions(CompanyEmployee companyEmployee,
+            List<DeductionsDto> userDeductions,
+            List<DeductionsDto> userAllowances,
+            Map<LocalDate, Long> dailyWorkedMinutes,
+            Set<LocalDate> actualWorkDays,
+            LocalDate startLocal,
+            LocalDate endLocal,
+            List<String> holidayDates,
+            int penaltyAmount) {
+        Map<String, Integer> map = new LinkedHashMap<>();
+        if (penaltyAmount > 0) {
+            map.put("Penalty", penaltyAmount);
+        }
+        addPfAndPtDeductions(companyEmployee, userDeductions, userAllowances, dailyWorkedMinutes,
+                actualWorkDays, startLocal, endLocal, holidayDates, map);
+    }
+
+    private void addPfAndPtDeductions(CompanyEmployee companyEmployee,
+            List<DeductionsDto> userDeductions,
+            List<DeductionsDto> userAllowances,
+            Map<LocalDate, Long> dailyWorkedMinutes,
+            Set<LocalDate> actualWorkDays,
+            LocalDate startLocal,
+            LocalDate endLocal,
+            List<String> holidayDates,
+            Map<String, Integer> penaltyMap) {
         if (companyEmployee == null || userDeductions == null) {
             return;
         }
@@ -1247,6 +1295,16 @@ public class UserInOutServiceImpl implements UserInOutService {
                 && companyEmployee.getEmployeeType().getId() == 2
                 && companyEmployee.getHourlyRate() != null;
 
+        Set<LocalDate> holidayLocalDates = new HashSet<>();
+        if (holidayDates != null) {
+            for (String d : holidayDates) {
+                try {
+                    holidayLocalDates.add(LocalDate.parse(d, DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
         if (isHourly) {
             long totalMinutes = (dailyWorkedMinutes != null)
                     ? dailyWorkedMinutes.values().stream().mapToLong(Long::longValue).sum()
@@ -1259,15 +1317,6 @@ public class UserInOutServiceImpl implements UserInOutService {
         } else {
             int monthlySalary = companyEmployee.getBasicSalary() != null ? companyEmployee.getBasicSalary() : 0;
             double dailyRate = monthlySalary / 30.0;
-            Set<LocalDate> holidayLocalDates = new HashSet<>();
-            if (holidayDates != null) {
-                for (String d : holidayDates) {
-                    try {
-                        holidayLocalDates.add(LocalDate.parse(d, DateTimeFormatter.ofPattern("dd/MM/yyyy")));
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
             Set<LocalDate> paidOffDays = calculatePaidDays(startLocal, endLocal, companyEmployee.getWeeklyOff(),
                     holidayLocalDates);
             int actualWorkDayCount = actualWorkDays != null ? actualWorkDays.size() : 0;
@@ -1286,9 +1335,30 @@ public class UserInOutServiceImpl implements UserInOutService {
         // 5. Total Earnings
         int totalEarnings = baseSalary + totalOtAmount + totalAllowance;
 
+        // Add Penalty rules to userDeductions if applicable
+        if (penaltyMap != null && !penaltyMap.isEmpty()) {
+            for (Map.Entry<String, Integer> entry : penaltyMap.entrySet()) {
+                String ruleName = entry.getKey();
+                Integer amount = entry.getValue();
+                if (amount != null && amount > 0) {
+                    boolean hasPenalty = userDeductions.stream()
+                            .anyMatch(d -> ruleName.equalsIgnoreCase(d.getLabel()) || ruleName.equalsIgnoreCase(d.getName()));
+                    if (!hasPenalty) {
+                        DeductionsDto penaltyDto = new DeductionsDto();
+                        penaltyDto.setEmployeeId(companyEmployee.getEmployeeId());
+                        penaltyDto.setType("Deduction");
+                        penaltyDto.setLabel(ruleName);
+                        penaltyDto.setName(ruleName);
+                        penaltyDto.setAmount(amount);
+                        userDeductions.add(penaltyDto);
+                    }
+                }
+            }
+        }
+
         // 6. Canteen / Other Deductions
         int otherDeductions = calculateCanteenDeductions(companyEmployee, dailyWorkedMinutes, actualWorkDays,
-                startLocal, endLocal);
+                startLocal, endLocal, holidayLocalDates);
 
         // 7. Regular deductions (from DB)
         int totalUserDeductions = userDeductions.stream()
@@ -1332,6 +1402,182 @@ public class UserInOutServiceImpl implements UserInOutService {
         }
     }
 
+    public static class PenaltyResult {
+        private final String ruleName;
+        private final int amount;
+
+        public PenaltyResult(String ruleName, int amount) {
+            this.ruleName = ruleName;
+            this.amount = amount;
+        }
+
+        public String getRuleName() {
+            return ruleName;
+        }
+
+        public int getAmount() {
+            return amount;
+        }
+    }
+
+    // ===== Helper: calculate penalties grouped by rule name =====
+    private Map<String, Integer> calculatePenaltyMap(CompanyEmployee employee, List<UserInOut> userInOutList, ZoneId zone) {
+        Map<String, Integer> penaltyMap = new LinkedHashMap<>();
+        if (employee == null || userInOutList == null || userInOutList.isEmpty() || employee.getCompanyShift() == null) {
+            return penaltyMap;
+        }
+        if (!"Time Based".equals(employee.getCompanyShift().getShiftType())) {
+            return penaltyMap;
+        }
+        boolean checkLateEntry = Boolean.TRUE.equals(employee.getLateEntryPenaltyRule());
+        boolean checkEarlyExit = Boolean.TRUE.equals(employee.getEarlyExitPenaltyRule());
+        if (!checkLateEntry && !checkEarlyExit) {
+            return penaltyMap;
+        }
+
+        for (UserInOut uio : userInOutList) {
+            if (uio.getTimeIn() != null && uio.getTimeOut() != null) {
+                if (checkLateEntry) {
+                    PenaltyResult lateResult = calculateLateEntryPenalty(employee, uio.getTimeIn(), zone);
+                    if (lateResult != null && lateResult.getAmount() > 0) {
+                        penaltyMap.merge(lateResult.getRuleName(), lateResult.getAmount(), Integer::sum);
+                    }
+                }
+                if (checkEarlyExit) {
+                    PenaltyResult earlyResult = calculateEarlyExitPenalty(employee, uio.getTimeOut(), zone);
+                    if (earlyResult != null && earlyResult.getAmount() > 0) {
+                        penaltyMap.merge(earlyResult.getRuleName(), earlyResult.getAmount(), Integer::sum);
+                    }
+                }
+            }
+        }
+        return penaltyMap;
+    }
+
+    // ===== Helper: calculate total penalty for a list of attendance entries =====
+    private int calculateTotalPenalty(CompanyEmployee employee, List<UserInOut> userInOutList, ZoneId zone) {
+        Map<String, Integer> map = calculatePenaltyMap(employee, userInOutList, zone);
+        return map.values().stream().mapToInt(Integer::intValue).sum();
+    }
+
+    // ===== Helper: compute penalty given a rule, day salary, shift hours & diff minutes =====
+    private int computePenalty(AttendancePenaltyRules rule, int daySalary, float totalHours, long diffMinutes) {
+        float perHourSalary = daySalary / (float) totalHours;
+        perHourSalary = new BigDecimal(perHourSalary).setScale(2, RoundingMode.HALF_UP).floatValue();
+        float perMinuteSalary = perHourSalary / 60f;
+        perMinuteSalary = new BigDecimal(perMinuteSalary).setScale(2, RoundingMode.HALF_UP).floatValue();
+
+        long penaltyHours = diffMinutes > 0 ? (long) Math.ceil(diffMinutes / 60.0) : 1L;
+
+        return switch (rule.getDeductionType()) {
+            case "Fixed Amount" -> (int) (penaltyHours * (rule.getAmount() != null ? rule.getAmount() : 0));
+            case "5 Min Salary", "15 Min Salary", "30 Min Salary", "1 Hour Salary" -> (int) (penaltyHours * Math.round(perHourSalary));
+            case "Half Day Salary" -> daySalary / 2;
+            case "1 Day Salary" -> daySalary;
+            case "1.5 Day Salary" -> (int) Math.round(daySalary * 1.5);
+            case "2 Day Salary" -> daySalary * 2;
+            case "2.5 Day Salary" -> (int) Math.round(daySalary * 2.5);
+            case "3 Day Salary" -> daySalary * 3;
+            default -> 0;
+        };
+    }
+
+    // ===== Main: calculate LATE ENTRY penalty amount =====
+    private PenaltyResult calculateLateEntryPenalty(CompanyEmployee employee, java.util.Date timeInDate, ZoneId zone) {
+        if (employee.getCompanyShift() == null)
+            return null;
+        Timestamp shiftStartTs = employee.getCompanyShift().getStartTime();
+        if (shiftStartTs == null)
+            return null;
+
+        Integer basic = employee.getBasicSalary();
+        if (basic == null || basic <= 0)
+            return null;
+        int daySalary = basic / 30;
+        Float totalHours = employee.getCompanyShift().getTotalHours();
+        if (totalHours == null || totalHours <= 0)
+            return null;
+
+        LocalDateTime actualIn = timeInDate.toInstant().atZone(zone).toLocalDateTime();
+        LocalTime rawStart = shiftStartTs.toInstant().atZone(zone).toLocalTime();
+
+        if (rawStart.equals(LocalTime.MIDNIGHT) && actualIn.getHour() >= 12) {
+            rawStart = LocalTime.NOON;
+        }
+
+        LocalDateTime expectedStart = LocalDateTime.of(actualIn.toLocalDate(), rawStart);
+        long lateMinutes = Duration.between(expectedStart, actualIn).toMinutes();
+        if (lateMinutes <= 0)
+            return null;
+        return pickAndApplyRule(employee, daySalary, totalHours, lateMinutes, false);
+    }
+
+    // ===== Main: calculate EARLY EXIT penalty amount =====
+    private PenaltyResult calculateEarlyExitPenalty(CompanyEmployee employee, java.util.Date timeOutDate, ZoneId zone) {
+        if (employee.getCompanyShift() == null)
+            return null;
+        Timestamp shiftEndTs = employee.getCompanyShift().getEndTime();
+        if (shiftEndTs == null)
+            return null;
+
+        Integer basic = employee.getBasicSalary();
+        if (basic == null || basic <= 0)
+            return null;
+        int daySalary = basic / 30;
+        Float totalHours = employee.getCompanyShift().getTotalHours();
+        if (totalHours == null || totalHours <= 0)
+            return null;
+
+        LocalDateTime actualOut = timeOutDate.toInstant().atZone(zone).toLocalDateTime();
+        LocalTime rawEnd = shiftEndTs.toInstant().atZone(zone).toLocalTime();
+
+        if (rawEnd.equals(LocalTime.MIDNIGHT) && actualOut.getHour() <= 12) {
+            rawEnd = LocalTime.NOON;
+        }
+
+        LocalDateTime expectedEnd = LocalDateTime.of(actualOut.toLocalDate(), rawEnd);
+        long earlyMinutes = Duration.between(actualOut, expectedEnd).toMinutes(); // reverse direction
+        if (earlyMinutes <= 0)
+            return null;
+        return pickAndApplyRule(employee, daySalary, totalHours, earlyMinutes, true);
+    }
+
+    // ===== Shared: pick rule & apply =====
+    private PenaltyResult pickAndApplyRule(CompanyEmployee employee, int daySalary, float totalHours, long diffMinutes,
+                                 boolean type) {
+        if (employee.getCompanyDetails() == null)
+            return null;
+        List<AttendancePenaltyRules> rules = attendancePenaltyRulesRepository
+                .findByCompanyId(employee.getCompanyDetails().getId(), type);
+        if (rules == null || rules.isEmpty())
+            return null;
+
+        rules.sort(Comparator.comparingInt(AttendancePenaltyRules::getMinutes));
+
+        AttendancePenaltyRules chosenRule = null;
+        for (AttendancePenaltyRules r : rules) {
+            if (diffMinutes >= r.getMinutes()) {
+                chosenRule = r; // keep last that satisfies
+            } else if (chosenRule == null) {
+                // fallback: if no smaller rule exists, pick the first greater one
+                chosenRule = r;
+            }
+            // don’t break, so you get the best match
+        }
+        if (chosenRule == null)
+            return null;
+
+        int amount = computePenalty(chosenRule, daySalary, totalHours, diffMinutes);
+        if (amount <= 0)
+            return null;
+
+        String ruleName = (chosenRule.getRuleName() != null && !chosenRule.getRuleName().isBlank())
+                ? chosenRule.getRuleName()
+                : "Penalty";
+
+        return new PenaltyResult(ruleName, amount);
+    }
+
     private Set<LocalDate> calculatePaidDays(LocalDate startLocalDate, LocalDate endLocalDate, WeeklyOff config,
             Set<LocalDate> holidayDates) {
         Set<LocalDate> paidDays = new HashSet<>();
@@ -1356,7 +1602,8 @@ public class UserInOutServiceImpl implements UserInOutService {
     }
 
     private int calculateCanteenDeductions(CompanyEmployee employee, Map<LocalDate, Long> dailyWorkedMinutes,
-            Set<LocalDate> workDays, LocalDate startLocalDate, LocalDate endLocalDate) {
+            Set<LocalDate> workDays, LocalDate startLocalDate, LocalDate endLocalDate,
+            Set<LocalDate> holidayDates) {
         if (employee == null || startLocalDate == null || endLocalDate == null) {
             return 0;
         }
@@ -1390,8 +1637,10 @@ public class UserInOutServiceImpl implements UserInOutService {
                 isWeeklyOff = isWeeklyOffDay(dayOfWeek, weekOfMonth, employee.getWeeklyOff());
             }
 
-            // Cut food charge on all days EXCEPT unworked weekly off
-            if (isWeeklyOff && !isWorked) {
+            boolean isHoliday = holidayDates != null && holidayDates.contains(date);
+
+            // Cut food charge on all days EXCEPT unworked weekly off and holidays
+            if ((isWeeklyOff || isHoliday) && !isWorked) {
                 continue;
             }
 

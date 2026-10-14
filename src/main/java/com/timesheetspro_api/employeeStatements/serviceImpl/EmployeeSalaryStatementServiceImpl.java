@@ -375,7 +375,7 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
 //                System.out.println("=========== baseSalary ====="+baseSalary);
 //            }
         }
-        int otherDeductions = calculateCanteenDeductions(companyEmployee, dailyWorkedMinutes, actualWorkDays, startLocalDate, endLocalDate)
+        int otherDeductions = calculateCanteenDeductions(companyEmployee, dailyWorkedMinutes, actualWorkDays, startLocalDate, endLocalDate, holidayDates)
                 + penaltyAmount;
         int totalEarnings = baseSalary + otAmountFinal + totalAllowance;
         int ptAmount = Boolean.TRUE.equals(companyEmployee.getIsPt())
@@ -570,7 +570,8 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
 
     // Helper method to calculate canteen deductions
     private int calculateCanteenDeductions(CompanyEmployee employee, Map<LocalDate, Long> dailyWorkedMinutes,
-                                           Set<LocalDate> workDays, LocalDate startLocalDate, LocalDate endLocalDate) {
+                                           Set<LocalDate> workDays, LocalDate startLocalDate, LocalDate endLocalDate,
+                                           Set<LocalDate> holidayDates) {
         if (employee == null) {
             return 0;
         }
@@ -604,8 +605,10 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
                 isWeeklyOff = isWeeklyOffDay(dayOfWeek, weekOfMonth, employee.getWeeklyOff());
             }
 
-            // Cut food charge on all days EXCEPT unworked weekly off
-            if (isWeeklyOff && !isWorked) {
+            boolean isHoliday = holidayDates != null && holidayDates.contains(date);
+
+            // Cut food charge on all days EXCEPT unworked weekly off and holidays
+            if ((isWeeklyOff || isHoliday) && !isWorked) {
                 continue;
             }
 
