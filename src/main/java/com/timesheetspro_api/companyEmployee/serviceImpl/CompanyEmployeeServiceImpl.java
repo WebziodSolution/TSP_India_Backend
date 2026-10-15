@@ -157,6 +157,7 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
                     Map<String, Object> res = new HashMap<>();
                     CompanyEmployeeDto companyEmployeeDto = this.getEmployee(companyEmployee.getEmployeeId());
                     res.put("employeeId", companyEmployeeDto.getEmployeeId());
+                    res.put("departmentId", companyEmployeeDto.getDepartmentId());
                     String userName = Stream.of(
                                     companyEmployeeDto.getFirstName(),
                                     companyEmployeeDto.getMiddleName(),
