@@ -1342,7 +1342,8 @@ public class UserInOutServiceImpl implements UserInOutService {
                 Integer amount = entry.getValue();
                 if (amount != null && amount > 0) {
                     boolean hasPenalty = userDeductions.stream()
-                            .anyMatch(d -> ruleName.equalsIgnoreCase(d.getLabel()) || ruleName.equalsIgnoreCase(d.getName()));
+                            .anyMatch(d -> ruleName.equalsIgnoreCase(d.getLabel())
+                                    || ruleName.equalsIgnoreCase(d.getName()));
                     if (!hasPenalty) {
                         DeductionsDto penaltyDto = new DeductionsDto();
                         penaltyDto.setEmployeeId(companyEmployee.getEmployeeId());
@@ -1421,9 +1422,11 @@ public class UserInOutServiceImpl implements UserInOutService {
     }
 
     // ===== Helper: calculate penalties grouped by rule name =====
-    private Map<String, Integer> calculatePenaltyMap(CompanyEmployee employee, List<UserInOut> userInOutList, ZoneId zone) {
+    private Map<String, Integer> calculatePenaltyMap(CompanyEmployee employee, List<UserInOut> userInOutList,
+            ZoneId zone) {
         Map<String, Integer> penaltyMap = new LinkedHashMap<>();
-        if (employee == null || userInOutList == null || userInOutList.isEmpty() || employee.getCompanyShift() == null) {
+        if (employee == null || userInOutList == null || userInOutList.isEmpty()
+                || employee.getCompanyShift() == null) {
             return penaltyMap;
         }
         if (!"Time Based".equals(employee.getCompanyShift().getShiftType())) {
@@ -1460,7 +1463,8 @@ public class UserInOutServiceImpl implements UserInOutService {
         return map.values().stream().mapToInt(Integer::intValue).sum();
     }
 
-    // ===== Helper: compute penalty given a rule, day salary, shift hours & diff minutes =====
+    // ===== Helper: compute penalty given a rule, day salary, shift hours & diff
+    // minutes =====
     private int computePenalty(AttendancePenaltyRules rule, int daySalary, float totalHours, long diffMinutes) {
         float perHourSalary = daySalary / (float) totalHours;
         perHourSalary = new BigDecimal(perHourSalary).setScale(2, RoundingMode.HALF_UP).floatValue();
@@ -1471,7 +1475,8 @@ public class UserInOutServiceImpl implements UserInOutService {
 
         return switch (rule.getDeductionType()) {
             case "Fixed Amount" -> (int) (penaltyHours * (rule.getAmount() != null ? rule.getAmount() : 0));
-            case "5 Min Salary", "15 Min Salary", "30 Min Salary", "1 Hour Salary" -> (int) (penaltyHours * Math.round(perHourSalary));
+            case "5 Min Salary", "15 Min Salary", "30 Min Salary", "1 Hour Salary" ->
+                (int) (penaltyHours * Math.round(perHourSalary));
             case "Half Day Salary" -> daySalary / 2;
             case "1 Day Salary" -> daySalary;
             case "1.5 Day Salary" -> (int) Math.round(daySalary * 1.5);
@@ -1544,7 +1549,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
     // ===== Shared: pick rule & apply =====
     private PenaltyResult pickAndApplyRule(CompanyEmployee employee, int daySalary, float totalHours, long diffMinutes,
-                                 boolean type) {
+            boolean type) {
         if (employee.getCompanyDetails() == null)
             return null;
         List<AttendancePenaltyRules> rules = attendancePenaltyRulesRepository
@@ -1661,7 +1666,7 @@ public class UserInOutServiceImpl implements UserInOutService {
         if (totalEarnings == null || totalEarnings <= 0) {
             return 0;
         }
-        if (totalEarnings >= 15000) {
+        if (totalEarnings >= 25000) {
             return 1800;
         } else {
             int pct = (employee != null && employee.getPfPercentage() != null && employee.getPfPercentage() > 0)
