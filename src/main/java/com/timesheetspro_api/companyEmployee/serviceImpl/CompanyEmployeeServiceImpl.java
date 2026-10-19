@@ -95,7 +95,8 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
     public List<Map<String, Object>> getReports(int companyId, String type, int month, String userTimeZone) {
         try {
             int year = LocalDate.now().getYear();
-            LocalDate startLocal = LocalDate.of(year, month + 1, 1);
+            int targetMonth = month + 1;
+            LocalDate startLocal = LocalDate.of(year, targetMonth, 1);
             LocalDate endLocal = startLocal.withDayOfMonth(startLocal.lengthOfMonth());
             Date startDate = Date.valueOf(startLocal);
             Date endDate = Date.valueOf(endLocal);
@@ -106,36 +107,79 @@ public class CompanyEmployeeServiceImpl implements CompanyEmployeeService {
 
             List<UserInOut> userInOutList = userInOutRepository.findAll(spec);
 
-            // Collect unique (employeeId, companyId) pairs
-            Set<String> uniqueKeys = new HashSet<>();
+            // Collect unique employee IDs from userInOutList
+            Set<Integer> employeeIds = new LinkedHashSet<>();
             for (UserInOut u : userInOutList) {
-                String key = u.getUser().getEmployeeId() + "|" + u.getCompanyDetails().getId();
-                uniqueKeys.add(key);
+                if (u.getUser() != null) {
+                    employeeIds.add(u.getUser().getEmployeeId());
+                }
             }
 
+            // Fetch all SalaryStatementHistory for this company, target month, and year
+            List<SalaryStatementHistory> allMonthHistories = this.salaryStatementHistoryRepository
+                    .findByCompanyIdAndMonthAndYear(companyId, targetMonth, year);
+
+            for (SalaryStatementHistory history : allMonthHistories) {
+                if (history.getEmployeeId() != null) {
+                    employeeIds.add(history.getEmployeeId());
+                }
+            }
+
+            Map<Integer, List<SalaryStatementHistory>> historyByEmployee = allMonthHistories.stream()
+                    .filter(h -> h.getEmployeeId() != null)
+                    .collect(Collectors.groupingBy(SalaryStatementHistory::getEmployeeId));
+
             List<Map<String, Object>> results = new ArrayList<>();
-            for (String key : uniqueKeys) {
-                String[] parts = key.split("\\|");
-                Integer employeeId = Integer.valueOf(parts[0]);
-                Integer compId = Integer.valueOf(parts[1]);
+            for (Integer employeeId : employeeIds) {
+                List<SalaryStatementHistory> historyList = historyByEmployee.get(employeeId);
+                if (historyList == null || historyList.isEmpty()) {
+                    continue;
+                }
 
-                List<SalaryStatementHistory> historyList =
-                        salaryStatementHistoryRepository.findByEmployeeIdAndCompanyId(employeeId, compId);
+                CompanyEmployee companyEmployee = this.companyEmployeeRepository.findById(employeeId).orElse(null);
+                if (companyEmployee == null) {
+                    continue;
+                }
 
+                String userName = null;
                 for (SalaryStatementHistory history : historyList) {
-                    // Build your result map as needed
-                    Map<String, Object> record = new HashMap<>();
-                    record.put("userName", history.getEmployeeName());
-                    CompanyEmployee companyEmployee = this.companyEmployeeRepository.findById(employeeId).orElseThrow(() -> new RuntimeException("Employee not found"));
-                    if (companyEmployee.getIsPf() && type.equals("PF")) {
-                        record.put("employee_pf_amount", history.getTotalPfAmount());
-                        record.put("employer_pf_amount", history.getTotalPfAmount());
-                        record.put("total_amount", history.getTotalPfAmount() * 2);
-                        results.add(record);
-                    } else if (companyEmployee.getIsPt() && type.equals("PT")) {
-                        record.put("pt_amount", companyEmployee.getPtAmount());
-                        results.add(record);
+                    if (history.getEmployeeName() != null && !history.getEmployeeName().trim().isEmpty()) {
+                        userName = history.getEmployeeName();
+                        break;
                     }
+                }
+                if (userName == null) {
+                    userName = ((companyEmployee.getFirstName() != null ? companyEmployee.getFirstName() : "") + " "
+                            + (companyEmployee.getLastName() != null ? companyEmployee.getLastName() : "")).trim();
+                }
+
+                if (Boolean.TRUE.equals(companyEmployee.getIsPt()) && "PT".equalsIgnoreCase(type)) {
+                    int totalPtAmount = 0;
+                    for (SalaryStatementHistory history : historyList) {
+                        int pt = history.getPtAmount() != null ? history.getPtAmount()
+                                : (companyEmployee.getPtAmount() != null ? companyEmployee.getPtAmount() : 0);
+                        totalPtAmount += pt;
+                    }
+
+                    Map<String, Object> record = new HashMap<>();
+                    record.put("userName", userName);
+                    record.put("pt_amount", totalPtAmount);
+                    results.add(record);
+
+                } else if (Boolean.TRUE.equals(companyEmployee.getIsPf()) && "PF".equalsIgnoreCase(type)) {
+                    int totalPfAmount = 0;
+                    for (SalaryStatementHistory history : historyList) {
+                        if (history.getTotalPfAmount() != null) {
+                            totalPfAmount += history.getTotalPfAmount();
+                        }
+                    }
+
+                    Map<String, Object> record = new HashMap<>();
+                    record.put("userName", userName);
+                    record.put("employee_pf_amount", totalPfAmount);
+                    record.put("employer_pf_amount", totalPfAmount);
+                    record.put("total_amount", totalPfAmount * 2);
+                    results.add(record);
                 }
             }
             return results;

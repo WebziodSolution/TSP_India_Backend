@@ -21,11 +21,24 @@ public interface SalaryStatementHistoryRepository extends JpaRepository<SalarySt
     SalaryStatementHistory findByMonth(int companyId, String month);
 
     @Query("SELECT s FROM SalaryStatementHistory s WHERE s.employeeId = :employeeId AND s.month = :month AND s.year = :year AND s.companyDetails.id = :companyId")
-    SalaryStatementHistory isExites(@Param("companyId") int companyId,
-                                    @Param("employeeId") int employeeId,
+    SalaryStatementHistory isExites(@Param("employeeId") int employeeId,
+                                    @Param("companyId") int companyId,
                                     @Param("month") Integer month,
                                     @Param("year") Integer year
                                     );
+
+    @Query("SELECT s FROM SalaryStatementHistory s WHERE s.companyDetails.id = :companyId AND s.month = :month AND (:year IS NULL OR s.year = :year OR s.year IS NULL)")
+    List<SalaryStatementHistory> findByCompanyIdAndMonthAndYear(
+            @Param("companyId") int companyId,
+            @Param("month") int month,
+            @Param("year") Integer year);
+
+    @Query("SELECT s FROM SalaryStatementHistory s WHERE s.employeeId = :employeeId AND s.companyDetails.id = :companyId AND s.month = :month AND (:year IS NULL OR s.year = :year OR s.year IS NULL)")
+    List<SalaryStatementHistory> findByEmployeeIdAndCompanyIdAndMonthAndYear(
+            @Param("employeeId") int employeeId,
+            @Param("companyId") int companyId,
+            @Param("month") int month,
+            @Param("year") Integer year);
 
     @Query("""
             SELECT 
