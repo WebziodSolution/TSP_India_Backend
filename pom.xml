@@ -165,6 +165,13 @@
 			<version>3.13.0</version>
 		</dependency>
 
+		<!-- OpenHTMLtoPDF for high-speed HTML to PDF generation -->
+		<dependency>
+			<groupId>com.openhtmltopdf</groupId>
+			<artifactId>openhtmltopdf-pdfbox</artifactId>
+			<version>1.0.10</version>
+		</dependency>
+
 	</dependencies>
 
 	<build>

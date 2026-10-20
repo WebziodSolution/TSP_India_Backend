@@ -19,6 +19,7 @@ import com.timesheetspro_api.common.repository.company.*;
 import com.timesheetspro_api.common.service.CommonService;
 import com.timesheetspro_api.common.specification.UserInOutSpecification;
 import com.timesheetspro_api.holidayTemplateDetails.service.HolidayTemplateDetailsService;
+import com.timesheetspro_api.userInOut.service.TimeCardPdfService;
 import com.timesheetspro_api.userInOut.service.UserInOutService;
 import com.timesheetspro_api.common.dto.deductions.DeductionsDto;
 import com.timesheetspro_api.common.model.deductions.Deductions;
@@ -50,18 +51,16 @@ import java.util.stream.Collectors;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.poi.ss.util.CellRangeAddress;
 
-import java.util.List;
-import java.util.Map;
 import java.util.stream.Stream;
 
 @Service("userInOutService")
 public class UserInOutServiceImpl implements UserInOutService {
 
     @Autowired
-    private UserInOutRepository userInOutRepository;
+    private TimeCardPdfService timeCardPdfService;
 
     @Autowired
-    private UserRepository userRepository;
+    private UserInOutRepository userInOutRepository;
 
     @Autowired
     private CompanyEmployeeRepository companyEmployeeRepository;
@@ -97,13 +96,19 @@ public class UserInOutServiceImpl implements UserInOutService {
     private AttendancePenaltyRulesRepository attendancePenaltyRulesRepository;
 
     private LocalDate parseDateString(String dateStr) {
-        if (dateStr == null)
+        if (dateStr == null || dateStr.isBlank())
             return null;
         // Remove any trailing time part (e.g., "25/03/2026, 16:19:57")
         if (dateStr.contains(",")) {
             dateStr = dateStr.split(",")[0].trim();
         }
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        dateStr = dateStr.trim();
+        DateTimeFormatter formatter;
+        if (dateStr.contains("-")) {
+            formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        } else {
+            formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        }
         return LocalDate.parse(dateStr, formatter);
     }
 
@@ -2694,5 +2699,251 @@ public class UserInOutServiceImpl implements UserInOutService {
             e.printStackTrace();
             throw new RuntimeException(e.getMessage(), e);
         }
+    }
+
+    @Override
+    public List<Map<String, Object>> getFoodReport(List<Integer> userIds, String startDate, String endDate,
+            String timeZone, Integer companyId, List<Integer> departmentIds) {
+        try {
+            List<Map<String, Object>> responseList = new ArrayList<>();
+
+            ZoneId zone;
+            try {
+                zone = (timeZone != null && !timeZone.trim().isEmpty()) ? ZoneId.of(timeZone.trim()) : ZoneId.of("UTC");
+            } catch (Exception ex) {
+                zone = ZoneId.of("UTC");
+            }
+
+            Instant startInstant;
+            Instant endInstant;
+            LocalDate startLocal;
+            LocalDate endLocal;
+
+            if (startDate == null || endDate == null) {
+                ZoneId utc = ZoneId.of("UTC");
+                LocalDate now = LocalDate.now(utc);
+                LocalDate firstOfMonth = now.withDayOfMonth(1);
+
+                startLocal = firstOfMonth;
+                endLocal = now;
+
+                ZonedDateTime startZdt = firstOfMonth.atStartOfDay(utc);
+                ZonedDateTime endZdt = now.atTime(LocalTime.MAX).atZone(utc);
+                startInstant = startZdt.toInstant();
+                endInstant = endZdt.toInstant();
+            } else {
+                startLocal = parseDateString(startDate);
+                endLocal = parseDateString(endDate);
+
+                ZonedDateTime startZdt = startLocal.atStartOfDay(zone);
+                ZonedDateTime endZdt = endLocal.atTime(LocalTime.MAX).atZone(zone);
+                startInstant = startZdt.toInstant();
+                endInstant = endZdt.toInstant();
+            }
+
+            Date startUTC = Date.from(startInstant);
+            Date endUTC = Date.from(endInstant);
+
+            List<LocalDate> dateRange = startLocal.datesUntil(endLocal.plusDays(1)).collect(Collectors.toList());
+
+            // 1. Build specification to query userInOut table
+            Specification<UserInOut> spec = UserInOutSpecification.createdOnGreaterThanEqual(startUTC)
+                    .and(UserInOutSpecification.createdOnLessThanEqual(endUTC));
+
+            if (companyId != null) {
+                spec = spec.and(UserInOutSpecification.hasCompany(companyId));
+            }
+
+            // is_salary_generate = 0
+            spec = spec.and((root, query, cb) -> cb.or(cb.equal(root.get("isSalaryGenerate"), 0),
+                    cb.isNull(root.get("isSalaryGenerate"))));
+
+            if (userIds != null && !userIds.isEmpty()) {
+                spec = spec.and(UserInOutSpecification.userIdIn(userIds));
+            }
+
+            List<UserInOut> userInOutList = this.userInOutRepository.findAll(spec);
+
+            if (userIds != null && !userIds.isEmpty()) {
+                userInOutList = userInOutList.stream()
+                        .filter(uio -> uio.getUser() != null && userIds.contains(uio.getUser().getEmployeeId()))
+                        .collect(Collectors.toList());
+            }
+
+            if (companyId != null) {
+                userInOutList = userInOutList.stream()
+                        .filter(uio -> uio.getCompanyDetails() != null
+                                && companyId.equals(uio.getCompanyDetails().getId()))
+                        .collect(Collectors.toList());
+            }
+
+            userInOutList = userInOutList.stream()
+                    .filter(uio -> uio.getIsSalaryGenerate() == null || uio.getIsSalaryGenerate() == 0)
+                    .collect(Collectors.toList());
+
+            // Prepare department id set for type-safe Long matching
+            Set<Long> deptIdSet = (departmentIds != null && !departmentIds.isEmpty())
+                    ? departmentIds.stream().filter(Objects::nonNull).map(Number::longValue).collect(Collectors.toSet())
+                    : Collections.emptySet();
+
+            // Group userInOut records by employee
+            Map<Integer, List<UserInOut>> userEntriesMap = new LinkedHashMap<>();
+            for (UserInOut uio : userInOutList) {
+                if (uio.getUser() != null) {
+                    userEntriesMap.computeIfAbsent(uio.getUser().getEmployeeId(), k -> new ArrayList<>()).add(uio);
+                }
+            }
+
+            // Process each employee
+            for (Map.Entry<Integer, List<UserInOut>> entry : userEntriesMap.entrySet()) {
+                Integer empId = entry.getKey();
+                List<UserInOut> empRecords = entry.getValue();
+
+                CompanyEmployee companyEmployee = this.companyEmployeeRepository.findById(empId)
+                        .orElse(empRecords.get(0).getUser());
+
+                // Filter by departmentIds if provided
+                if (!deptIdSet.isEmpty()) {
+                    if (companyEmployee.getDepartment() == null
+                            || companyEmployee.getDepartment().getId() == null
+                            || !deptIdSet.contains(companyEmployee.getDepartment().getId().longValue())) {
+                        continue;
+                    }
+                }
+
+                if (companyEmployee.getCompanyShift() != null) {
+                    this.companyShiftRepository.findById(companyEmployee.getCompanyShift().getId())
+                            .ifPresent(companyEmployee::setCompanyShift);
+                }
+
+                String employeeName = getFullName(companyEmployee.getFirstName(), companyEmployee.getMiddleName(),
+                        companyEmployee.getLastName());
+
+                int breakMinutes = companyEmployee.getLunchBreak() != null ? companyEmployee.getLunchBreak() : 0;
+
+                Map<LocalDate, List<UserInOut>> entriesByDate = new HashMap<>();
+                for (UserInOut uio : empRecords) {
+                    if (uio.getCreatedOn() != null) {
+                        LocalDate date = uio.getCreatedOn().toInstant().atZone(zone).toLocalDate();
+                        entriesByDate.computeIfAbsent(date, k -> new ArrayList<>()).add(uio);
+                    }
+                }
+
+                List<String> holidayDates = getHolidayDates(companyEmployee, companyId);
+                WeeklyOff weeklyOff = companyEmployee.getWeeklyOff();
+
+                int presentDays = 0;
+                int absentDays = 0;
+                int weekOffDays = 0;
+                int holidayDays = 0;
+                double totalFoodAmount = 0.0;
+
+                for (LocalDate date : dateRange) {
+                    List<UserInOut> dayEntries = entriesByDate.get(date);
+
+                    boolean isHoliday = false;
+                    boolean isWeeklyOff = false;
+                    String formattedCurrentDate = date.format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+
+                    if (holidayDates.contains(formattedCurrentDate)) {
+                        isHoliday = true;
+                    }
+
+                    if (!isHoliday && weeklyOff != null) {
+                        DayOfWeek dayOfWeek = date.getDayOfWeek();
+                        int weekOfMonth = ((date.getDayOfMonth() - 1) / 7) + 1;
+                        isWeeklyOff = isWeeklyOffDay(dayOfWeek, weekOfMonth, weeklyOff);
+                    }
+
+                    boolean hasValidPresentEntry = false;
+                    int dayTotalGrossMinutes = 0;
+                    if (dayEntries != null) {
+                        for (UserInOut uio : dayEntries) {
+                            if (uio.getTimeIn() != null && uio.getTimeOut() != null) {
+                                hasValidPresentEntry = true;
+                                long diffMs = uio.getTimeOut().getTime() - uio.getTimeIn().getTime();
+                                int grossMinutes = (int) (diffMs / (60 * 1000));
+                                dayTotalGrossMinutes += grossMinutes;
+                            }
+                        }
+                    }
+
+                    if (hasValidPresentEntry) {
+                        presentDays++;
+                        int dayNetMinutes = Math.max(0, dayTotalGrossMinutes - breakMinutes);
+                        double dayFoodCharge = calculateFoodCharge(companyEmployee, dayNetMinutes);
+                        totalFoodAmount += dayFoodCharge;
+                    } else {
+                        if (isHoliday) {
+                            holidayDays++;
+                        } else if (isWeeklyOff) {
+                            weekOffDays++;
+                        } else {
+                            absentDays++;
+                        }
+                    }
+                }
+
+                BigDecimal foodAmount = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+                BigDecimal totalFoodAmountFormatted = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+
+                String canteenType = companyEmployee.getCanteenType();
+                Integer canteenAmount = companyEmployee.getCanteenAmount();
+
+                if (canteenType != null && !"No Canteen".equalsIgnoreCase(canteenType) && canteenAmount != null
+                        && canteenAmount > 0) {
+                    if ("Labour Type".equalsIgnoreCase(canteenType)) {
+                        foodAmount = BigDecimal.valueOf(canteenAmount).setScale(2, RoundingMode.HALF_UP)
+                                .multiply(BigDecimal.valueOf(2));
+                        totalFoodAmountFormatted = BigDecimal.valueOf(totalFoodAmount).setScale(2,
+                                RoundingMode.HALF_UP);
+                    } else {
+                        // Office Type / Salaried: fixed monthly canteen amount
+                        foodAmount = BigDecimal.valueOf(canteenAmount).setScale(2, RoundingMode.HALF_UP);
+                        if (presentDays > 0) {
+                            totalFoodAmountFormatted = foodAmount;
+                        }
+                    }
+                }
+
+                Map<String, Object> reportItem = new LinkedHashMap<>();
+                reportItem.put("employeeId", companyEmployee.getEmployeeId());
+                reportItem.put("employeeName", employeeName);
+                reportItem.put("presentDays", presentDays);
+                reportItem.put("absentDays", absentDays);
+                reportItem.put("weekOffDays", weekOffDays);
+                reportItem.put("holidayDays", holidayDays);
+                reportItem.put("foodAmount", foodAmount);
+                reportItem.put("totalFoodAmount", totalFoodAmountFormatted);
+
+                responseList.add(reportItem);
+            }
+
+            return responseList;
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException(e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public byte[] generateTimeCardPdf(List<Integer> userIds, String startDate, String endDate,
+            String timeZone, List<Integer> locationIds, List<Integer> departmentIds,
+            Integer companyId, boolean isDetail) {
+
+        // 1. Fetch data using existing business logic
+        Map<String, Object> result = this.getAllEntriesGroupByUser(
+                userIds, startDate, endDate, timeZone, locationIds, departmentIds, companyId);
+
+        List<Map<String, Object>> users = (List<Map<String, Object>>) result.get("users");
+        // 2. Fetch company name
+        String companyName = "Company";
+        if (companyId != null) {
+            companyName = this.companyDetailsRepository.findById(companyId)
+                    .map(c -> c.getCompanyName())
+                    .orElse("Company");
+        }
+        // 3. Render PDF in memory
+        return this.timeCardPdfService.generatePdf(users, companyName, startDate, endDate, isDetail);
     }
 }

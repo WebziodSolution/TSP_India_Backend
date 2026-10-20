@@ -38,16 +38,40 @@ public class UserInOutController {
             @RequestParam(value = "startDate", required = false) String startDate,
             @RequestParam(value = "endDate", required = false) String endDate,
             @RequestParam(value = "timeZone", required = false) String timeZone,
-            @RequestParam(value = "companyId", required = false) String companyId
-    ) {
+            @RequestParam(value = "companyId", required = false) String companyId) {
         Map<String, Object> resBody = new HashMap<>();
         try {
-            resBody = this.userInOutService.getTimeInOutReport(userIds, startDate, endDate, timeZone, Integer.parseInt(companyId));
+            resBody = this.userInOutService.getTimeInOutReport(userIds, startDate, endDate, timeZone,
+                    Integer.parseInt(companyId));
             return new ApiResponse<>(HttpStatus.OK.value(), "InOut's Report fetched successfully", resBody);
         } catch (Exception e) {
             e.printStackTrace();
             resBody.put("error", e.getMessage());
-            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Failed to Fetch InOut's Report", resBody);
+            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Failed to Fetch InOut's Report",
+                    resBody);
+        }
+    }
+
+    @GetMapping("/foodReport")
+    public ApiResponse<?> getFoodReport(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestParam(value = "userIds", required = false) List<Integer> userIds,
+            @RequestParam(value = "startDate", required = false) String startDate,
+            @RequestParam(value = "endDate", required = false) String endDate,
+            @RequestParam(value = "timeZone", required = false) String timeZone,
+            @RequestParam(value = "companyId", required = false) Integer companyId,
+            @RequestParam(value = "departmentIds", required = false) List<Integer> departmentIds) {
+        Map<String, Object> resBody = new HashMap<>();
+        try {
+            return new ApiResponse<>(
+                    HttpStatus.OK.value(),
+                    "Food report fetched successfully",
+                    this.userInOutService.getFoodReport(userIds, startDate, endDate, timeZone, companyId,
+                            departmentIds));
+        } catch (Exception e) {
+            e.printStackTrace();
+            resBody.put("error", e.getMessage());
+            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Failed to fetch Food Report", resBody);
         }
     }
 
@@ -64,7 +88,8 @@ public class UserInOutController {
         try {
             // Generate the Excel file
             Workbook workbook = this.userInOutService.generateExcelReport(
-                    this.userInOutService.getTimeInOutReport(userIds, startDate, endDate, timeZone, companyId), startDate, endDate, timeZone);
+                    this.userInOutService.getTimeInOutReport(userIds, startDate, endDate, timeZone, companyId),
+                    startDate, endDate, timeZone);
 
             // Write to ByteArrayOutputStream
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -91,66 +116,97 @@ public class UserInOutController {
     }
 
     @GetMapping("/getDashboardData/{companyId}")
-    public ApiResponse<?> getDashboardData(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @PathVariable int companyId) {
+    public ApiResponse<?> getDashboardData(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @PathVariable int companyId) {
         Map<String, Object> resBody = new HashMap<>();
         try {
-            return new ApiResponse<>(HttpStatus.OK.value(), "Current In-Users fetched successfully", this.userInOutService.dashboardCounts(companyId));
+            return new ApiResponse<>(HttpStatus.OK.value(), "Current In-Users fetched successfully",
+                    this.userInOutService.dashboardCounts(companyId));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to get userInOut", resBody);
         }
     }
 
     @GetMapping("/getUserLastInOut/{userId}")
-    public ApiResponse<?> getUserLastInOut(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @PathVariable int userId) {
+    public ApiResponse<?> getUserLastInOut(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @PathVariable int userId) {
         Map<String, Object> resBody = new HashMap<>();
         try {
-            return new ApiResponse<>(HttpStatus.OK.value(), "User fetched successfully", this.userInOutService.getUserLastInOut(userId));
+            return new ApiResponse<>(HttpStatus.OK.value(), "User fetched successfully",
+                    this.userInOutService.getUserLastInOut(userId));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to get userInOut", resBody);
         }
     }
 
     @GetMapping("/getAllRecords")
-    public ApiResponse<?> getAllEntriesByUserId(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @RequestParam(value = "userIds", required = false) List<Integer> userIds, @RequestParam(value = "startDate", required = false) String startDate, @RequestParam(value = "endDate", required = false) String endDate, @RequestParam(value = "timeZone", required = false) String timeZone, @RequestParam(value = "locationIds", required = false) List<Integer> locationIds, @RequestParam(value = "departmentIds", required = false) List<Integer> departmentIds, @RequestParam(value = "companyId", required = false) Integer companyId) {
+    public ApiResponse<?> getAllEntriesByUserId(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestParam(value = "userIds", required = false) List<Integer> userIds,
+            @RequestParam(value = "startDate", required = false) String startDate,
+            @RequestParam(value = "endDate", required = false) String endDate,
+            @RequestParam(value = "timeZone", required = false) String timeZone,
+            @RequestParam(value = "locationIds", required = false) List<Integer> locationIds,
+            @RequestParam(value = "departmentIds", required = false) List<Integer> departmentIds,
+            @RequestParam(value = "companyId", required = false) Integer companyId) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             String token = authorizationHeader.substring(7);
             Long userId = jwtService.extractUserId(token);
-            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully", this.userInOutService.getAllEntriesByUserId(userIds, startDate, endDate, timeZone, locationIds, departmentIds, companyId));
+            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully",
+                    this.userInOutService.getAllEntriesByUserId(userIds, startDate, endDate, timeZone, locationIds,
+                            departmentIds, companyId));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to get userInOut", resBody);
         }
     }
 
     @GetMapping("/getAllRecordsGroupByUser")
-    public ApiResponse<?> getAllEntriesGroupByUser(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @RequestParam(value = "userIds", required = false) List<Integer> userIds, @RequestParam(value = "startDate", required = false) String startDate, @RequestParam(value = "endDate", required = false) String endDate, @RequestParam(value = "timeZone", required = false) String timeZone, @RequestParam(value = "locationIds", required = false) List<Integer> locationIds, @RequestParam(value = "departmentIds", required = false) List<Integer> departmentIds, @RequestParam(value = "companyId", required = false) Integer companyId) {
+    public ApiResponse<?> getAllEntriesGroupByUser(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestParam(value = "userIds", required = false) List<Integer> userIds,
+            @RequestParam(value = "startDate", required = false) String startDate,
+            @RequestParam(value = "endDate", required = false) String endDate,
+            @RequestParam(value = "timeZone", required = false) String timeZone,
+            @RequestParam(value = "locationIds", required = false) List<Integer> locationIds,
+            @RequestParam(value = "departmentIds", required = false) List<Integer> departmentIds,
+            @RequestParam(value = "companyId", required = false) Integer companyId) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             String token = authorizationHeader.substring(7);
             Long userId = jwtService.extractUserId(token);
-            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully", this.userInOutService.getAllEntriesGroupByUser(userIds, startDate, endDate, timeZone, locationIds, departmentIds, companyId));
+            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully",
+                    this.userInOutService.getAllEntriesGroupByUser(userIds, startDate, endDate, timeZone, locationIds,
+                            departmentIds, companyId));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to get userInOut", resBody);
         }
     }
 
     @GetMapping("/todayrecords")
-    public ApiResponse<?> getTodayEntries(@RequestHeader(value = "Authorization", required = false) String authorizationHeader) {
+    public ApiResponse<?> getTodayEntries(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             String token = authorizationHeader.substring(7);
             Long userId = jwtService.extractUserId(token);
-            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully", this.userInOutService.getTodayEntriesByUserId(Integer.parseInt(userId.toString())));
+            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully",
+                    this.userInOutService.getTodayEntriesByUserId(Integer.parseInt(userId.toString())));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to get userInOut", resBody);
         }
     }
 
     @GetMapping("/get/{id}")
-    public ApiResponse<?> getUserInOut(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @PathVariable String id) {
+    public ApiResponse<?> getUserInOut(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @PathVariable String id) {
         Map<String, Object> resBody = new HashMap<>();
         try {
-            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully", this.userInOutService.getUserInOut(Long.parseLong(id)));
+            return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut fetched successfully",
+                    this.userInOutService.getUserInOut(Long.parseLong(id)));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to get userInOut", resBody);
         }
@@ -160,8 +216,7 @@ public class UserInOutController {
     public ApiResponse<?> createUserInOut(
             @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
             @RequestParam(value = "locationId", required = false) String locationId,
-            @RequestParam(value = "companyId", required = false) String companyId
-    ) {
+            @RequestParam(value = "companyId", required = false) String companyId) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             String token = authorizationHeader.substring(7);
@@ -177,15 +232,16 @@ public class UserInOutController {
             return new ApiResponse<>(
                     HttpStatus.CREATED.value(),
                     "UserInOut added successfully",
-                    this.userInOutService.createUserInOut(userId.intValue(), parsedLocationId, parsedCompanyId)
-            );
+                    this.userInOutService.createUserInOut(userId.intValue(), parsedLocationId, parsedCompanyId));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to create userInOut", resBody);
         }
     }
 
     @PutMapping("/update/{id}")
-    public ApiResponse<?> updateUserInOut(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @PathVariable String id) {
+    public ApiResponse<?> updateUserInOut(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @PathVariable String id) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             String token = authorizationHeader.substring(7);
@@ -194,12 +250,15 @@ public class UserInOutController {
             this.userInOutService.updateUserInOut(Long.parseLong(id), Integer.parseInt(userId.toString()));
             return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut updated successfully", "");
         } catch (Exception e) {
-            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to update userInOut details", resBody);
+            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to update userInOut details",
+                    resBody);
         }
     }
 
     @PutMapping("/update")
-    public ApiResponse<?> updateInOut(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @RequestBody UserInOutDto userInOutDto) {
+    public ApiResponse<?> updateInOut(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestBody UserInOutDto userInOutDto) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             String token = authorizationHeader.substring(7);
@@ -208,7 +267,8 @@ public class UserInOutController {
             this.userInOutService.updateUserInOut(userInOutDto);
             return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut updated successfully", "");
         } catch (Exception e) {
-            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to update userInOut details", resBody);
+            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to update userInOut details",
+                    resBody);
         }
     }
 
@@ -216,31 +276,29 @@ public class UserInOutController {
     public ApiResponse<?> createUserInOutFromApplication(
             @RequestParam(value = "employeeId", required = false) String employeeId,
             @RequestParam(value = "locationId", required = false) String locationId,
-            @RequestParam(value = "companyId", required = false) String companyId
-    ) {
+            @RequestParam(value = "companyId", required = false) String companyId) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             Integer parsedLocationId = (locationId != null && !locationId.isBlank() && !"undefined".equals(locationId))
                     ? Integer.parseInt(locationId)
                     : null;
 
-            String res = this.userInOutService.clickInOut(Integer.parseInt(employeeId), parsedLocationId, Integer.parseInt(companyId));
+            String res = this.userInOutService.clickInOut(Integer.parseInt(employeeId), parsedLocationId,
+                    Integer.parseInt(companyId));
             String[] parts = res.split(":", 2);
-            String status = parts[0];      // "created" or "updated"
+            String status = parts[0]; // "created" or "updated"
             String username = parts.length > 1 ? parts[1] : "";
 
             if ("created".equals(status)) {
                 return new ApiResponse<>(
                         HttpStatus.CREATED.value(),
-                        username+" clock in successfully",
-                        ""
-                );
+                        username + " clock in successfully",
+                        "");
             } else {
                 return new ApiResponse<>(
                         HttpStatus.OK.value(),
-                        username+" clock out successfully",
-                        ""
-                );
+                        username + " clock out successfully",
+                        "");
             }
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to create userInOut", resBody);
@@ -254,8 +312,7 @@ public class UserInOutController {
             return new ApiResponse<>(
                     HttpStatus.CREATED.value(),
                     "UserInOut added successfully",
-                    this.userInOutService.addClockInOut(userInOutDto)
-            );
+                    this.userInOutService.addClockInOut(userInOutDto));
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to create userInOut", resBody);
         }
@@ -269,22 +326,51 @@ public class UserInOutController {
             return new ApiResponse<>(
                     HttpStatus.CREATED.value(),
                     "Bulk UserInOut added successfully",
-                    ""
-            );
+                    "");
         } catch (Exception e) {
             e.printStackTrace();
-            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to bulk create userInOut", resBody);
+            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to bulk create userInOut",
+                    resBody);
         }
     }
 
     @DeleteMapping("/delete/{id}")
-    public ApiResponse<?> deleteUserInOut(@RequestHeader(value = "Authorization", required = false) String authorizationHeader, @PathVariable String id) {
+    public ApiResponse<?> deleteUserInOut(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @PathVariable String id) {
         Map<String, Object> resBody = new HashMap<>();
         try {
             this.userInOutService.deleteUserInOut(Long.parseLong(id));
             return new ApiResponse<>(HttpStatus.OK.value(), "UserInOut deleted successfully", "");
         } catch (Exception e) {
-            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to delete userInOut record", resBody);
+            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), "Fail to delete userInOut record",
+                    resBody);
         }
     }
+
+    @GetMapping("/downloadTimeCardPdf")
+    public ResponseEntity<byte[]> downloadTimeCardPdf(
+            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
+            @RequestParam(value = "userIds", required = false) List<Integer> userIds,
+            @RequestParam(value = "startDate", required = false) String startDate,
+            @RequestParam(value = "endDate", required = false) String endDate,
+            @RequestParam(value = "timeZone", required = false) String timeZone,
+            @RequestParam(value = "locationIds", required = false) List<Integer> locationIds,
+            @RequestParam(value = "departmentIds", required = false) List<Integer> departmentIds,
+            @RequestParam(value = "companyId", required = false) Integer companyId,
+            @RequestParam(value = "isDetail", defaultValue = "false") boolean isDetail) {
+        try {
+            byte[] pdfBytes = this.userInOutService.generateTimeCardPdf(userIds, startDate, endDate, timeZone,
+                    locationIds, departmentIds, companyId, isDetail);
+            String fileName = "Employee_Attendance_Report_" + startDate + "_To_" + endDate + ".pdf";
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                    .contentType(MediaType.APPLICATION_PDF)
+                    .body(pdfBytes);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
 }
