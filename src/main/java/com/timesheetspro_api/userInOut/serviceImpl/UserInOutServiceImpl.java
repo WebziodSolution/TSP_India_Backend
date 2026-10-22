@@ -1048,11 +1048,11 @@ public class UserInOutServiceImpl implements UserInOutService {
             return 0.0;
         }
 
-        boolean isHourly = employee.getEmployeeType() != null
-                && employee.getEmployeeType().getId() == 2
-                && employee.getHourlyRate() != null;
+//        boolean isHourly = employee.getEmployeeType() != null
+//                && employee.getEmployeeType().getId() == 2
+//                && employee.getHourlyRate() != null;
 
-        if (isHourly) {
+//        if (isHourly) {
             if ("Labour Type".equals(canteenType)) {
                 long threshold = 13 * 60; // 13 hours (780 minutes)
                 if (workMinutes > threshold) {
@@ -1065,10 +1065,10 @@ public class UserInOutServiceImpl implements UserInOutService {
             } else {
                 return 0.0;
             }
-        } else {
-            // For Salaried employee, canteen amount is monthly, pass getCanteenAmount / 30
-            return Math.round((canteenAmount / 30.0) * 100.0) / 100.0;
-        }
+//        } else {
+//            // For Salaried employee, canteen amount is monthly, pass getCanteenAmount / 30
+//            return Math.round((canteenAmount / 30.0) * 100.0) / 100.0;
+//        }
     }
 
     // Helper method to calculate overtime amount for a date range (matches
@@ -2880,9 +2880,15 @@ public class UserInOutServiceImpl implements UserInOutService {
                             weekOffDays++;
                         } else {
                             absentDays++;
-                            double dayFoodCharge = calculateFoodCharge(companyEmployee, 0);
-                            totalFoodAmount += dayFoodCharge;
                         }
+
+                        double foodCharge = 0.0;
+                        if (!isWeeklyOff && !isHoliday) {
+                            foodCharge = calculateFoodCharge(companyEmployee, 0);
+                        } else if (companyEmployee.getCanteenType() != null && companyEmployee.getCanteenType().equals("Office Type")) {
+                            foodCharge = calculateFoodCharge(companyEmployee, 0);
+                        }
+                        totalFoodAmount += foodCharge;
                     }
                 }
 

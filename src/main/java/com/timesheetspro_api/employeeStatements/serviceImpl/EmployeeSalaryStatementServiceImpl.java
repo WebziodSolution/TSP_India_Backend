@@ -589,11 +589,12 @@ public class EmployeeSalaryStatementServiceImpl implements EmployeeSalaryStateme
             return 0;
         }
 
-        boolean isHourly = employee.getEmployeeType() != null
-                && employee.getEmployeeType().getId() == 2
-                && employee.getHourlyRate() != null;
+//        boolean isHourly = employee.getEmployeeType() != null
+//                && employee.getEmployeeType().getId() == 2
+//                && employee.getHourlyRate() != null;
 
-        if (!isHourly && "Office Type".equals(canteenType)) {
+//        if (!isHourly && "Office Type".equals(canteenType)) {
+        if ("Office Type".equals(canteenType)) {
             return perDayAmount;
         }
 
