@@ -417,7 +417,7 @@ public class UserInOutServiceImpl implements UserInOutService {
 
                         if (!isWeeklyOff && !isHoliday) {
                             foodCharge = calculateFoodCharge(companyEmployee, 0);
-                        } else if (companyEmployee.getCanteenType().equals("Office Type")) {
+                        } else if (companyEmployee.getCanteenType() != null && companyEmployee.getCanteenType().equals("Office Type")) {
                             foodCharge = calculateFoodCharge(companyEmployee, 0);
                         }
 
@@ -550,7 +550,7 @@ public class UserInOutServiceImpl implements UserInOutService {
                                     double foodCharge = 0.0;
                                     if (!isWeeklyOff && !isHoliday) {
                                         foodCharge = calculateFoodCharge(companyEmployee, 0);
-                                    } else if (companyEmployee.getCanteenType().equals("Office Type")) {
+                                    } else if (companyEmployee.getCanteenType() != null && companyEmployee.getCanteenType().equals("Office Type")) {
                                         foodCharge = calculateFoodCharge(companyEmployee, 0);
                                     }
                                     dataItem.put("foodCharge", foodCharge);
@@ -2754,9 +2754,9 @@ public class UserInOutServiceImpl implements UserInOutService {
                 spec = spec.and(UserInOutSpecification.hasCompany(companyId));
             }
 
-            // is_salary_generate = 0
-            spec = spec.and((root, query, cb) -> cb.or(cb.equal(root.get("isSalaryGenerate"), 0),
-                    cb.isNull(root.get("isSalaryGenerate"))));
+//            // is_salary_generate = 0
+//            spec = spec.and((root, query, cb) -> cb.or(cb.equal(root.get("isSalaryGenerate"), 0),
+//                    cb.isNull(root.get("isSalaryGenerate"))));
 
             if (userIds != null && !userIds.isEmpty()) {
                 spec = spec.and(UserInOutSpecification.userIdIn(userIds));
@@ -2880,6 +2880,8 @@ public class UserInOutServiceImpl implements UserInOutService {
                             weekOffDays++;
                         } else {
                             absentDays++;
+                            double dayFoodCharge = calculateFoodCharge(companyEmployee, 0);
+                            totalFoodAmount += dayFoodCharge;
                         }
                     }
                 }
