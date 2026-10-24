@@ -26,16 +26,12 @@ public class CommonController {
     @Autowired
     private CommonService commonService;
 
-    @Autowired
-    private JwtTokenUtil jwtUtil;
-
     @PostMapping("/uploadFile/start")
     public ApiResponse<?> startUpload(
             @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
             @RequestParam String folderName,
             @RequestParam(required = false) Integer userId,
-            @RequestParam String fileName
-    ) {
+            @RequestParam String fileName) {
         try {
             Map<String, Object> res = this.commonService.startUpload(folderName, userId, fileName);
             return new ApiResponse<>(HttpStatus.OK.value(), "Upload started", res);
@@ -53,13 +49,11 @@ public class CommonController {
             @RequestParam int chunkIndex,
             @RequestParam int totalChunks,
             @RequestParam String originalFileName,
-            @RequestParam MultipartFile chunk
-    ) {
+            @RequestParam MultipartFile chunk) {
         try {
             Map<String, Object> res = this.commonService.uploadChunk(
                     folderName, userId, uploadId,
-                    chunkIndex, totalChunks, originalFileName, chunk
-            );
+                    chunkIndex, totalChunks, originalFileName, chunk);
             return new ApiResponse<>(HttpStatus.OK.value(), "Chunk uploaded", res);
         } catch (Exception e) {
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), e.getMessage(), null);
@@ -73,12 +67,10 @@ public class CommonController {
             @RequestParam(required = false) Integer userId,
             @RequestParam String uploadId,
             @RequestParam int totalChunks,
-            @RequestParam String originalFileName
-    ) {
+            @RequestParam String originalFileName) {
         try {
             Map<String, Object> res = this.commonService.completeUpload(
-                    folderName, userId, uploadId, totalChunks, originalFileName
-            );
+                    folderName, userId, uploadId, totalChunks, originalFileName);
             return new ApiResponse<>(HttpStatus.OK.value(), "File merged successfully", res);
         } catch (Exception e) {
             e.printStackTrace();
@@ -86,49 +78,55 @@ public class CommonController {
         }
     }
 
-//    @PostMapping("/uploadFile")
-//    public ApiResponse<?> uploadFiles(
-//            @RequestHeader(value = "Authorization", required = false) String authorizationHeader,
-//            @RequestParam String folderName,
-//            @RequestParam(required = false) Integer userId,
-//            @RequestParam(required = false) MultipartFile[] files, // For multiple files
-//            @RequestParam(required = false) MultipartFile file // For a single file
-//    ) {
-//        Map<String, Object> resBody = new HashMap<>();
-//        Integer loginUserId = null;
-//        try {
-//
-//            if (authorizationHeader != null) {
-//                if (userId != null) {
-//                    loginUserId = userId;
-//                } else {
-//                    loginUserId = Integer.parseInt(jwtUtil.extractUserId(authorizationHeader.substring(7)).toString());
-//                }
-//            }
-//            // Handle both single and multiple files
-//            if (file != null) {
-//                files = new MultipartFile[]{file}; // Convert single file to array for consistency
-//            }
-//
-//            if (files == null || files.length == 0) {
-//                return new ApiResponse<>(HttpStatus.BAD_REQUEST.value(), "No files provided", "");
-//            }
-//            Map<String, Object> resBodyObjectMap = this.commonService.uploadFiles(files, loginUserId, folderName);
-//
-//            if (resBodyObjectMap.get("status").equals("400")) {
-//                return new ApiResponse<>(HttpStatus.BAD_REQUEST.value(), resBodyObjectMap.get("message").toString(), "");
-//            }
-//            return new ApiResponse<>(
-//                    HttpStatus.OK.value(),
-//                    "Files uploaded successfully",
-//                    resBodyObjectMap.get("uploadedFiles")
-//            );
-//        } catch (Exception e) {
-//            e.printStackTrace();
-//            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), e.getMessage(), resBody);
-//        }
-//    }
-
+    // @PostMapping("/uploadFile")
+    // public ApiResponse<?> uploadFiles(
+    // @RequestHeader(value = "Authorization", required = false) String
+    // authorizationHeader,
+    // @RequestParam String folderName,
+    // @RequestParam(required = false) Integer userId,
+    // @RequestParam(required = false) MultipartFile[] files, // For multiple files
+    // @RequestParam(required = false) MultipartFile file // For a single file
+    // ) {
+    // Map<String, Object> resBody = new HashMap<>();
+    // Integer loginUserId = null;
+    // try {
+    //
+    // if (authorizationHeader != null) {
+    // if (userId != null) {
+    // loginUserId = userId;
+    // } else {
+    // loginUserId =
+    // Integer.parseInt(jwtUtil.extractUserId(authorizationHeader.substring(7)).toString());
+    // }
+    // }
+    // // Handle both single and multiple files
+    // if (file != null) {
+    // files = new MultipartFile[]{file}; // Convert single file to array for
+    // consistency
+    // }
+    //
+    // if (files == null || files.length == 0) {
+    // return new ApiResponse<>(HttpStatus.BAD_REQUEST.value(), "No files provided",
+    // "");
+    // }
+    // Map<String, Object> resBodyObjectMap = this.commonService.uploadFiles(files,
+    // loginUserId, folderName);
+    //
+    // if (resBodyObjectMap.get("status").equals("400")) {
+    // return new ApiResponse<>(HttpStatus.BAD_REQUEST.value(),
+    // resBodyObjectMap.get("message").toString(), "");
+    // }
+    // return new ApiResponse<>(
+    // HttpStatus.OK.value(),
+    // "Files uploaded successfully",
+    // resBodyObjectMap.get("uploadedFiles")
+    // );
+    // } catch (Exception e) {
+    // e.printStackTrace();
+    // return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(),
+    // e.getMessage(), resBody);
+    // }
+    // }
 
     @GetMapping("/getTimezones")
     public ApiResponse<?> getTimezones() {
@@ -305,17 +303,80 @@ public class CommonController {
                     "America/Virgin",
                     "America/Whitehorse",
                     "America/Winnipeg",
-                    "America/Yakutat"
-            );
+                    "America/Yakutat");
 
             return new ApiResponse<>(
                     HttpStatus.OK.value(),
                     "Time Zones fetched successfully",
-                    timezoneList
-            );
+                    timezoneList);
         } catch (Exception e) {
             e.printStackTrace();
             return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), e.getMessage(), Collections.emptyList());
+        }
+    }
+
+    @PostMapping("/sendErrorMail")
+    public ApiResponse<?> sendMail(@RequestBody Map<String, Object> payload) {
+        try {
+            if (payload == null || payload.isEmpty()) {
+                return new ApiResponse<>(HttpStatus.BAD_REQUEST.value(), "Payload cannot be empty", null);
+            }
+
+            String action = payload.get("action") != null ? String.valueOf(payload.get("action")) : "Unknown Action";
+            String error = payload.get("error") != null ? String.valueOf(payload.get("error"))
+                    : "No error message provided";
+            String timestamp = payload.get("timestamp") != null ? String.valueOf(payload.get("timestamp"))
+                    : new Date().toString();
+
+            // Recipient email: Always send to jay@ematrixinfotech.com
+            List<String> toEmails = Arrays.asList(
+                    "jay@ematrixinfotech.com",
+                    "ritesh@ematrixinfotech.com"
+            );
+
+            String subject = payload.get("subject") != null
+                    && !String.valueOf(payload.get("subject")).trim().isEmpty()
+                    ? String.valueOf(payload.get("subject")).trim()
+                    : "Error Alert: [" + action + "]";
+
+            StringBuilder body = new StringBuilder();
+
+            body.append("CalcSalary - Error\n");
+            body.append("===========================================\n\n");
+
+            body.append("Action     : ").append(action).append("\n");
+            body.append("Timestamp  : ").append(timestamp).append("\n\n");
+
+            body.append("Error Details:\n");
+            body.append(error).append("\n\n");
+
+            body.append("-------------------------------------------\n");
+            body.append("Payload Details:\n");
+
+            for (Map.Entry<String, Object> entry : payload.entrySet()) {
+                body.append(" - ")
+                        .append(entry.getKey())
+                        .append(": ")
+                        .append(entry.getValue())
+                        .append("\n");
+            }
+
+            body.append("-------------------------------------------\n");
+            for (String email : toEmails) {
+                this.commonService.sendEmail(
+                        email,
+                        subject,
+                        body.toString()
+                );
+            }
+            return new ApiResponse<>(
+                    HttpStatus.OK.value(),
+                    "Error email sent successfully",
+                    null
+            );
+        } catch (Exception e) {
+            errorLogger.error("Failed to send error email: " + e.getMessage(), e);
+            return new ApiResponse<>(HttpStatus.INTERNAL_SERVER_ERROR.value(), e.getMessage(), null);
         }
     }
 }

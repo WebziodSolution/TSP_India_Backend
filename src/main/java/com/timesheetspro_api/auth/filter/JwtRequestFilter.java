@@ -65,7 +65,8 @@ public class JwtRequestFilter extends OncePerRequestFilter {
 
                 Users user = this.userService.getUser(userId);
                 if (user == null) {
-                    CompanyEmployeeDto companyEmployee = this.companyEmployeeService.getEmployee(Integer.parseInt(userId.toString()));
+                    CompanyEmployeeDto companyEmployee = this.companyEmployeeService
+                            .getEmployee(Integer.parseInt(userId.toString()));
                     userData.put("userName", companyEmployee.getUserName());
                 } else {
                     userData.put("userName", user.getUsername());
@@ -81,7 +82,12 @@ public class JwtRequestFilter extends OncePerRequestFilter {
             }
             chain.doFilter(req, res);
 
-        } else if (requestUri.contains("/getAllCompanyEmployee") || requestUri.contains("/location") || requestUri.contains("/getTimezones") || requestUri.contains("/user/uploadProfileImage") || requestUri.contains("/uploadFile") || requestUri.contains("/user/generateResetLink") || requestUri.contains("/user/validateToken") || requestUri.contains("/user/resetPassword") || requestUri.contains("/user/create") || requestUri.contains("/user/login") || requestUri.contains("/inout/clockInOut")) {
+        } else if (requestUri.contains("/sendErrorMail") || requestUri.contains("/getAllCompanyEmployee")
+                || requestUri.contains("/location") || requestUri.contains("/getTimezones")
+                || requestUri.contains("/user/uploadProfileImage") || requestUri.contains("/uploadFile")
+                || requestUri.contains("/user/generateResetLink") || requestUri.contains("/user/validateToken")
+                || requestUri.contains("/user/resetPassword") || requestUri.contains("/user/create")
+                || requestUri.contains("/user/login") || requestUri.contains("/inout/clockInOut")) {
             chain.doFilter(req, res);
         } else {
             log.error("Invalid request URI : " + requestUri);

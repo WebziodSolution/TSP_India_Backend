@@ -35,7 +35,10 @@ public class SecurityConfigurer {
         http.csrf(AbstractHttpConfigurer::disable)
                 .cors(corsCustomizer -> corsCustomizer.configurationSource(corsConfigurationSource()))
                 .authorizeHttpRequests(requests -> requests
-                        .requestMatchers( "/getAllCompanyEmployee","/location/**","/inout/clockInOut", "/getTimezones", "/uploadFile", "/user/uploadProfileImage", "/user/login", "/user/resetPassword", "user/validateToken", "user/generateResetLink", "/user/create").permitAll()
+                        .requestMatchers("/getAllCompanyEmployee", "/location/**", "/inout/clockInOut", "/getTimezones",
+                                "/uploadFile", "/sendErrorMail", "/user/uploadProfileImage", "/user/login",
+                                "/user/resetPassword", "user/validateToken", "user/generateResetLink", "/user/create")
+                        .permitAll()
                         .anyRequest().authenticated())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(this.jwtRequestFilter, UsernamePasswordAuthenticationFilter.class)
@@ -43,13 +46,13 @@ public class SecurityConfigurer {
                         .accessDeniedHandler((request, response, accessDeniedException) -> {
                             System.out.println("Access Denied: " + accessDeniedException.getMessage());
                             response.sendError(HttpServletResponse.SC_FORBIDDEN, "Access Denied need token");
-                        })
-                );
+                        }));
         return http.build();
     }
 
     @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration)
+            throws Exception {
         return authenticationConfiguration.getAuthenticationManager();
     }
 
@@ -58,13 +61,15 @@ public class SecurityConfigurer {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOriginPatterns(List.of("*"));
 
-//        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-//        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type"));
+        // configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE",
+        // "OPTIONS"));
+        // configuration.setAllowedHeaders(Arrays.asList("Authorization",
+        // "Content-Type"));
         configuration.addAllowedHeader("*"); // Allows any headers, adjust as needed
         configuration.addAllowedMethod("*"); // Allows all HTTP methods, adjust as needed
         configuration.addAllowedOriginPattern("*");
         configuration.setAllowCredentials(true);
-//        configuration.setAllowedOrigins(List.of("*")); // Adjust as needed
+        // configuration.setAllowedOrigins(List.of("*")); // Adjust as needed
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);

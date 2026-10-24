@@ -32,6 +32,8 @@ import java.nio.file.Files;
 import java.util.*;
 
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import java.nio.charset.StandardCharsets;
 
 import javax.imageio.ImageIO;
 
@@ -45,10 +47,25 @@ public class CommonServiceImpl implements CommonService {
     @Value("${imageContextPath}")
     String imageContextPath;
 
-    @Value("${spring.mail.properties.mail.from}")
+    @Value("${spring.mail.host:s11777.bom1.stableserver.net}")
+    private String mailHost;
+
+    @Value("${spring.mail.port:587}")
+    private int mailPort;
+
+    @Value("${spring.mail.username:supportdesk@ematrixinfotechpms.com}")
+    private String mailUsername;
+
+    @Value("${spring.mail.password:01eMatrix007!}")
+    private String mailPassword;
+
+    @Value("${spring.mail.properties.mail.from:supportdesk@ematrixinfotechpms.com}")
     String mailFrom;
 
-    @Value("${spring.mail.properties.mail.fromName}")
+    @Value("${spring.mail.properties.mail.reply-to:supportdesk@ematrixinfotechpms.com}")
+    private String mailReplyTo;
+
+    @Value("${spring.mail.properties.mail.fromName:TimeSheetsPro-Support}")
     String mailFromName;
 
     private static final int MAX_DIM = 1920;
@@ -444,39 +461,53 @@ public class CommonServiceImpl implements CommonService {
 
     @Override
     public boolean sendEmail(String toEmail, String subject, String body) {
+        // Try JavaMailSender first
+        try {
+            if (sender != null) {
+                MimeMessage message = sender.createMimeMessage();
+                MimeMessageHelper helper = new MimeMessageHelper(message, false, StandardCharsets.UTF_8.name());
+                helper.setFrom(mailFrom, mailFromName);
+                helper.setTo(toEmail);
+                if (mailReplyTo != null && !mailReplyTo.trim().isEmpty()) {
+                    helper.setReplyTo(mailReplyTo);
+                }
+                helper.setSubject(subject);
+                helper.setText(body, false);
+                sender.send(message);
+                return true;
+            }
+        } catch (Exception e) {
+            errorLogger.error("Error sending email using JavaMailSender: " + e.getMessage(), e);
+        }
+
+        // Direct SMTP session fallback using configured properties
         try {
             Properties props = new Properties();
-            props.put("mail.smtp.host", "smtp.gmail.com");
-            props.put("mail.smtp.port", "587");
+            props.put("mail.smtp.host", mailHost);
+            props.put("mail.smtp.port", String.valueOf(mailPort));
             props.put("mail.smtp.auth", "true");
             props.put("mail.smtp.starttls.enable", "true");
+            props.put("mail.smtp.ssl.trust", mailHost);
 
             Session session = Session.getInstance(props, new jakarta.mail.Authenticator() {
+                @Override
                 protected PasswordAuthentication getPasswordAuthentication() {
-                    return new PasswordAuthentication(mailFrom, "rxkz jnbt gyvt gckp");
+                    return new PasswordAuthentication(mailUsername, mailPassword);
                 }
             });
 
             Message message = new MimeMessage(session);
-            message.setFrom(new InternetAddress(mailFrom));
+            message.setFrom(new InternetAddress(mailFrom, mailFromName));
             message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail));
+            if (mailReplyTo != null && !mailReplyTo.trim().isEmpty()) {
+                message.setReplyTo(new jakarta.mail.Address[]{new InternetAddress(mailReplyTo)});
+            }
             message.setSubject(subject);
             message.setText(body);
             Transport.send(message);
             return true;
-
-
-//            MimeMessage message = sender.createMimeMessage();
-//            MimeMessageHelper helper = new MimeMessageHelper(message, MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED,
-//                    StandardCharsets.UTF_8.name());
-//
-//            helper.setFrom(mailFrom, mailFromName);
-//            helper.setTo(toEmail);
-//            helper.setSubject(subject);
-//            helper.setText(body);
-//
-//            sender.send(message);
         } catch (Exception e) {
+            errorLogger.error("Failed to send email to " + toEmail + ": " + e.getMessage(), e);
             e.printStackTrace();
             return false;
         }
